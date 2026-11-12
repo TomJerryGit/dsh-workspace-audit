@@ -63,6 +63,13 @@ window.__ModuleLoader__.load({
       baselineDelta: '相对基线',
       newRisks: '新增风险',
       configHint: '可在项目根目录用 .workspace-audit.json 配置 ignore/accept。',
+      handover: '下载交接文档',
+      pdf: '导出 PDF',
+      trendChart: '平均分趋势',
+      issues: 'Issue',
+      prs: 'PR',
+      until: '至',
+      dimensions: { documentation: '文档', development: '开发', debugging: '调试', performance: '性能', functionality: '功能', security: '安全', github: 'GitHub' },
     };
     const en = {
       panel: 'Workspace Audit',
@@ -122,6 +129,13 @@ window.__ModuleLoader__.load({
       baselineDelta: 'vs baseline',
       newRisks: 'New risks',
       configHint: 'Configure ignore/accept in .workspace-audit.json at the project root.',
+      handover: 'Download handover',
+      pdf: 'Export PDF',
+      trendChart: 'Average score trend',
+      issues: 'Issues',
+      prs: 'PRs',
+      until: 'until',
+      dimensions: { documentation: 'Docs', development: 'Dev', debugging: 'Debug', performance: 'Perf', functionality: 'Features', security: 'Security', github: 'GitHub' },
     };
     const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
     const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '14px', padding: '14px', background: 'var(--dsw-alias-bg-layer-1)' };
@@ -144,6 +158,7 @@ window.__ModuleLoader__.load({
 
     function Panel() {
       const t = (key) => { const dict = /^zh/i.test(String(window.navigator && window.navigator.language)) ? zh : en; return dict[key] || key; };
+      const isZh = /^zh/i.test(String(window.navigator && window.navigator.language));
       const [token, setToken] = React.useState('');
       const [scan, setScan] = React.useState(null);
       const [state, setState] = React.useState('loading');
@@ -204,21 +219,42 @@ window.__ModuleLoader__.load({
           .then(() => load())
           .catch(() => {});
       };
-      const copy = () => { if (!scan) return; navigator.clipboard.writeText(scan.report).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
+      const copy = () => { if (!scan) return; navigator.clipboard.writeText(isZh ? scan.report : (scan.reportEn || scan.report)).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
       const download = () => {
         if (!scan) return;
-        const blob = new Blob([scan.report], { type: 'text/markdown;charset=utf-8' });
+        const blob = new Blob([isZh ? scan.report : (scan.reportEn || scan.report)], { type: 'text/markdown;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = 'workspace-audit.md';
         link.click();
         URL.revokeObjectURL(link.href);
       };
+      const downloadHandover = () => {
+        if (!scan) return;
+        const blob = new Blob([isZh ? scan.handover : (scan.handoverEn || scan.handover)], { type: 'text/markdown;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'START_HERE.md';
+        link.click();
+        URL.revokeObjectURL(link.href);
+      };
+      const printReport = () => {
+        if (!scan) return;
+        const report = isZh ? scan.report : (scan.reportEn || scan.report);
+        const win = window.open('', '_blank');
+        if (!win) return;
+        win.document.write('<!doctype html><meta charset="utf-8"><title>Workspace Audit</title><pre style="white-space:pre-wrap;font-family:system-ui,sans-serif;padding:24px">' + String(report).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>');
+        win.document.close();
+        win.focus();
+        win.print();
+      };
       const downloadHtml = () => {
         if (!scan) return;
         const escape = (value) => String(value ?? '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
         const rows = (scan.workspaces || []).map((workspace) => '<tr><td>' + escape(workspace.title) + '</td><td><b>' + workspace.score + '</b></td><td>' + escape(Object.entries(workspace.dimensions).map(([key, value]) => key + ' ' + value).join(' · ')) + '</td><td>' + escape((workspace.risks || []).map((risk) => '[' + risk.severity + '] ' + risk.text).join('<br/>')) + '</td></tr>').join('');
-        const html = '<!doctype html><meta charset="utf-8"><title>Workspace Audit</title><style>body{font-family:system-ui,sans-serif;margin:32px;color:#222}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px;vertical-align:top;font-size:13px}th{text-align:left}</style><h1>Workspace Audit</h1><p>Generated ' + new Date(scan.generatedAt).toLocaleString() + '</p><table><thead><tr><th>Workspace</th><th>Score</th><th>Dimensions</th><th>Risks</th></tr></thead><tbody>' + rows + '</tbody></table><pre style="white-space:pre-wrap;margin-top:24px">' + escape(scan.report) + '</pre>';
+        const report = isZh ? scan.report : (scan.reportEn || scan.report);
+        const handover = isZh ? scan.handover : (scan.handoverEn || scan.handover);
+        const html = '<!doctype html><meta charset="utf-8"><title>Workspace Audit</title><style>body{font-family:system-ui,sans-serif;margin:32px;color:#222}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px;vertical-align:top;font-size:13px}th{text-align:left}</style><h1>Workspace Audit</h1><p>Generated ' + new Date(scan.generatedAt).toLocaleString() + '</p><table><thead><tr><th>Workspace</th><th>Score</th><th>Dimensions</th><th>Risks</th></tr></thead><tbody>' + rows + '</tbody></table><h2>Handover</h2><pre style="white-space:pre-wrap">' + escape(handover || '') + '</pre><h2>Report</h2><pre style="white-space:pre-wrap;margin-top:24px">' + escape(report || '') + '</pre>';
         const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
@@ -246,6 +282,10 @@ window.__ModuleLoader__.load({
         .map((entry) => Array.isArray(entry.workspaces) ? entry.workspaces.find((row) => row.path === workspacePath) : null)
         .filter(Boolean)
         .map((row) => row.score);
+      const averageHistory = history.map((entry) => {
+        const rows = Array.isArray(entry.workspaces) ? entry.workspaces : [];
+        return rows.length > 0 ? Math.round(rows.reduce((sum, row) => sum + (Number(row.score) || 0), 0) / rows.length) : 0;
+      });
       return h('div', { style: page },
         h('header', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
           h('div', { style: { flex: '1 1 auto' } }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { margin: '4px 0 0', color: 'var(--dsw-alias-label-secondary)', fontSize: '13px' } }, t('subtitle'))),
@@ -264,6 +304,8 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', onClick: copy }, copied ? t('copied') : t('copy')),
           h('button', { type: 'button', onClick: download }, t('download')),
           h('button', { type: 'button', onClick: downloadHtml }, t('html')),
+          h('button', { type: 'button', onClick: downloadHandover }, t('handover')),
+          h('button', { type: 'button', onClick: printReport }, t('pdf')),
           h('button', { type: 'button', onClick: setBaseline }, t('baseline')),
         ),
         notice.length > 0 ? h('p', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, notice) : null,
@@ -279,7 +321,7 @@ window.__ModuleLoader__.load({
           h('h2', { style: { margin: 0, fontSize: '16px' } }, t('comparison')),
           h('div', { style: { overflowX: 'auto', marginTop: '8px' } },
             h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '11px' } },
-              h('thead', null, h('tr', null, ['workspace', 'score', 'documentation', 'development', 'debugging', 'performance', 'functionality', 'security', 'github', 'trend'].map((key) => h('th', { key, style: { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid var(--dsw-alias-border-l1)' } }, key)))),
+              h('thead', null, h('tr', null, ['workspace', 'score', 'documentation', 'development', 'debugging', 'performance', 'functionality', 'security', 'github', 'trend'].map((key) => h('th', { key, style: { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid var(--dsw-alias-border-l1)' } }, key === 'workspace' ? t('workspaces') : key === 'score' ? t('score') : key === 'trend' ? t('trend') : (t('dimensions') && t('dimensions')[key]) || key)))),
               h('tbody', null, workspaces.map((workspace) => h('tr', { key: workspace.path },
                 h('td', { style: { padding: '4px 6px' } }, workspace.title),
                 h('td', { style: { padding: '4px 6px', fontWeight: 700, color: color(workspace.score) } }, workspace.score),
@@ -288,6 +330,19 @@ window.__ModuleLoader__.load({
               ))),
             ),
           ),
+          averageHistory.length > 1
+            ? h('div', { style: { marginTop: '12px' } },
+                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginBottom: '4px' } }, t('trendChart')),
+                h('svg', { viewBox: '0 0 600 100', preserveAspectRatio: 'none', style: { width: '100%', height: '90px' } },
+                  h('polyline', {
+                    points: averageHistory.map((value, index) => (index / (averageHistory.length - 1)) * 600 + ',' + (100 - Math.max(0, Math.min(100, value)))).join(' '),
+                    fill: 'none',
+                    stroke: 'var(--dshqn-accent, var(--dsw-alias-brand-primary))',
+                    strokeWidth: '2',
+                  }),
+                ),
+              )
+            : null,
         ) : null,
         filteredWorkspaces.map((workspace) => {
           const risks = workspace.risks || [];
@@ -318,7 +373,7 @@ window.__ModuleLoader__.load({
               !scan.settings.online
                 ? h('span', null, t('github') + ': ' + t('offline'))
                 : workspace.github
-                  ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · issues ' + (workspace.github.openIssues ?? '—') + ' / PRs ' + (workspace.github.openPRs ?? '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
+                  ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · ' + t('issues') + ' ' + (workspace.github.openIssues ?? '—') + ' / ' + t('prs') + ' ' + (workspace.github.openPRs ?? '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
                   : null,
             ),
             workspace.rawScore !== undefined && workspace.rawScore !== workspace.score
@@ -333,7 +388,7 @@ window.__ModuleLoader__.load({
             (workspace.ignoredRisks && workspace.ignoredRisks.length > 0) || (workspace.acceptedRisks && workspace.acceptedRisks.length > 0)
               ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } },
                   t('ignored') + ' ' + (workspace.ignoredRisks || []).length + ' · ' + t('accepted') + ' ' + (workspace.acceptedRisks || []).length +
-                  ((workspace.acceptedRisks || []).length > 0 ? ' · ' + (workspace.acceptedRisks || []).map((risk) => risk.id + (risk.until ? ' until ' + risk.until : '')).join(', ') : ''),
+                  ((workspace.acceptedRisks || []).length > 0 ? ' · ' + (workspace.acceptedRisks || []).map((risk) => risk.id + (risk.until ? ' ' + t('until') + ' ' + risk.until : '')).join(', ') : ''),
                 )
               : null,
             Array.isArray(workspace.commands) && workspace.commands.length > 0
@@ -344,7 +399,7 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: { marginTop: '10px' } },
               risks.length === 0 ? h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-state-success-primary)' } }, t('noRisk')) : risks.map((risk, index) =>
-                h('div', { key: index, style: { fontSize: '12px', marginTop: '4px', color: risk.severity === 'P0' ? 'var(--dsw-alias-state-error-primary)' : risk.severity === 'P1' ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-label-secondary)' } }, '[' + risk.severity + '] ' + risk.text),
+                h('div', { key: index, style: { fontSize: '12px', marginTop: '4px', color: risk.severity === 'P0' ? 'var(--dsw-alias-state-error-primary)' : risk.severity === 'P1' ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-label-secondary)' } }, '[' + risk.severity + '] ' + (isZh ? risk.text : (risk.en || risk.text))),
               ),
             ),
           );
