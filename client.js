@@ -45,6 +45,13 @@ window.__ModuleLoader__.load({
       noLock: '无锁文件',
       html: '导出 HTML',
       commandsTitle: '启动/测试命令',
+      online: '允许网络检查',
+      onlineHint: '开启后才会调用 npm/pip audit 与 GitHub API；默认离线。',
+      offline: '离线',
+      duration: '耗时',
+      failures: '扫描失败',
+      gitMissing: '未检测到 Git',
+      p0Capped: 'P0 风险已限制总分',
     };
     const en = {
       panel: 'Workspace Audit',
@@ -86,6 +93,13 @@ window.__ModuleLoader__.load({
       noLock: 'No lockfile',
       html: 'Export HTML',
       commandsTitle: 'Run/test commands',
+      online: 'Allow network checks',
+      onlineHint: 'Enables npm/pip audit and GitHub API; offline by default.',
+      offline: 'Offline',
+      duration: 'Duration',
+      failures: 'Scan failures',
+      gitMissing: 'Git not detected',
+      p0Capped: 'P0 caps the score',
     };
     const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
     const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '14px', padding: '14px', background: 'var(--dsw-alias-bg-layer-1)' };
@@ -128,6 +142,12 @@ window.__ModuleLoader__.load({
       const addRoot = () => {
         auth().then((value) => fetch('/api/workspace-audit/settings', { method: 'POST', headers: { ...headers(value), 'content-type': 'application/json' }, body: JSON.stringify({ add: rootDraft.trim() }) }))
           .then(() => { setRootDraft(''); return load(); })
+          .catch(() => {});
+      };
+      const toggleOnline = () => {
+        const next = !(scan && scan.settings && scan.settings.online);
+        auth().then((value) => fetch('/api/workspace-audit/settings', { method: 'POST', headers: { ...headers(value), 'content-type': 'application/json' }, body: JSON.stringify({ online: next }) }))
+          .then(() => load())
           .catch(() => {});
       };
       const copy = () => { if (!scan) return; navigator.clipboard.writeText(scan.report).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
@@ -176,12 +196,19 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
           h('input', { value: rootDraft, placeholder: t('rootPlaceholder'), onChange: (event) => setRootDraft(event.target.value), style: { flex: '1 1 260px', padding: '6px 8px' } }),
           h('button', { type: 'button', onClick: addRoot, disabled: rootDraft.trim().length === 0 }, t('add')),
+          h('button', { type: 'button', onClick: toggleOnline, style: { fontWeight: scan.settings.online ? 700 : 400 } }, (scan.settings.online ? '✓ ' : '') + t('online')),
           ['all', 'P0', 'P1', 'P2'].map((severity) => h('button', { key: severity, type: 'button', onClick: () => setRiskFilter(severity), style: { fontWeight: riskFilter === severity ? 700 : 400 } }, severity === 'all' ? t('filterAll') : severity)),
           h('button', { type: 'button', onClick: copy }, copied ? t('copied') : t('copy')),
           h('button', { type: 'button', onClick: download }, t('download')),
           h('button', { type: 'button', onClick: downloadHtml }, t('html')),
         ),
         workspaces.length === 0 ? h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('empty')) : null,
+        h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+          t('duration') + '：' + Math.round((scan.durationMs || 0) / 1000) + 's · ' + (scan.settings.online ? t('online') : t('offline')) +
+          (scan.environment && scan.environment.git === false ? ' · ' + t('gitMissing') : '') + ' · ' + t('onlineHint')),
+        scan.failures && scan.failures.length > 0
+          ? h('section', { style: card }, h('strong', { style: { fontSize: '13px' } }, t('failures')), ...scan.failures.map((failure) => h('div', { key: failure.path, style: { fontSize: '11px', color: 'var(--dsw-alias-state-warn-primary)', marginTop: '4px' } }, failure.path + '：' + failure.error)))
+          : null,
         workspaces.length > 0 ? h('section', { style: card },
           h('h2', { style: { margin: 0, fontSize: '16px' } }, t('comparison')),
           h('div', { style: { overflowX: 'auto', marginTop: '8px' } },
@@ -214,12 +241,17 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } },
               workspace.dependencies && workspace.dependencies.manifests.length > 0
-                ? h('span', null, t('deps') + ': ' + (workspace.dependencies.lockfiles.length > 0 ? 'lock ✓' : t('noLock')) + ' · ' + t('vulns') + ' ' + workspace.dependencies.vulnerabilities.total + (workspace.dependencies.vulnerabilities.status === 'skipped' ? ' (skipped)' : ''))
+                ? h('span', null, t('deps') + ': ' + (workspace.dependencies.lockfiles.length > 0 ? 'lock ✓' : t('noLock')) + ' · ' + t('vulns') + ' ' + workspace.dependencies.vulnerabilities.total + (workspace.dependencies.vulnerabilities.status === 'offline' ? ' (' + t('offline') + ')' : workspace.dependencies.vulnerabilities.status === 'skipped' ? ' (skipped)' : ''))
                 : null,
-              workspace.github
-                ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
-                : null,
+              !scan.settings.online
+                ? h('span', null, t('github') + ': ' + t('offline'))
+                : workspace.github
+                  ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
+                  : null,
             ),
+            workspace.rawScore !== undefined && workspace.rawScore !== workspace.score
+              ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)', marginTop: '4px' } }, t('p0Capped') + '：' + workspace.rawScore + ' → ' + workspace.score)
+              : null,
             Array.isArray(workspace.commands) && workspace.commands.length > 0
               ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } }, t('commandsTitle') + '：' + workspace.commands.join(' · '))
               : null,
