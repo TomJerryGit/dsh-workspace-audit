@@ -13,8 +13,13 @@ const execFileAsync = promisify(execFile);
 const ROUTE = '/api/workspace-audit';
 const AUTH_PATH = ROUTE + '/auth';
 const SCAN_PATH = ROUTE + '/scan';
+const START_PATH = ROUTE + '/scan/start';
+const STATUS_PATH = ROUTE + '/scan/status';
+const CANCEL_PATH = ROUTE + '/scan/cancel';
 const SETTINGS_PATH = ROUTE + '/settings';
 const HISTORY_PATH = ROUTE + '/history';
+const BASELINE_PATH = ROUTE + '/baseline';
+const SCAN_JOBS = new Map();
 const MAX_WORKSPACES = 20;
 const SKIP_NAMES = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache', 'dist', 'build', 'target', '.next', '.nuxt', 'coverage']);
 const ARTIFACT_NAMES = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache', 'dist', 'build', 'target', '.next', '.nuxt', 'coverage', 'release-archive', 'test+files', 'BeeOffice-v5.2.3-windows', 'BeeOffice_logs']);
@@ -59,6 +64,74 @@ async function loadHistory() {
 async function saveHistory(entries) {
   await fs.mkdir(path.dirname(historyFile()), { recursive: true });
   await fs.writeFile(historyFile(), JSON.stringify({ entries: entries.slice(-30) }, null, 2) + '\n', 'utf8');
+}
+
+function baselineFile() {
+  return path.join(resolveDshHome(), 'workspace-audit', 'baseline.json');
+}
+
+async function loadBaseline() {
+  try {
+    const raw = JSON.parse(await fs.readFile(baselineFile(), 'utf8'));
+    return raw && Array.isArray(raw.workspaces) ? raw : { createdAt: 0, workspaces: [] };
+  } catch (error) {
+    return { createdAt: 0, workspaces: [] };
+  }
+}
+
+async function saveBaseline(baseline) {
+  await fs.mkdir(path.dirname(baselineFile()), { recursive: true });
+  await fs.writeFile(baselineFile(), JSON.stringify(baseline, null, 2) + '\n', 'utf8');
+}
+
+const KNOWN_RULES = new Set([
+  'no-git', 'dirty', 'no-remote', 'readme', 'ci', 'self-hosted-pr', 'secrets', 'dangerous-exec',
+  'artifacts', 'vulns', 'lockfile', 'unpinned', 'release-mismatch', 'archived', 'branch-protection',
+  'rate-limit', 'todo',
+]);
+
+async function readWorkspaceConfig(root) {
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(root, '.workspace-audit.json'), 'utf8'));
+    const accept = Array.isArray(raw.accept)
+      ? raw.accept
+          .filter((entry) => entry && typeof entry.rule === 'string' && KNOWN_RULES.has(entry.rule))
+          .slice(0, 100)
+          .map((entry) => ({
+            rule: entry.rule,
+            reason: typeof entry.reason === 'string' ? entry.reason.slice(0, 300) : '',
+            until: typeof entry.until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(entry.until) ? entry.until : '',
+          }))
+      : [];
+    return {
+      projectType: ['app', 'library', 'plugin', 'data'].includes(raw.projectType) ? raw.projectType : '',
+      ignore: Array.isArray(raw.ignore) ? raw.ignore.filter((rule) => typeof rule === 'string' && KNOWN_RULES.has(rule)).slice(0, 100) : [],
+      accept,
+    };
+  } catch (error) {
+    return { projectType: '', ignore: [], accept: [] };
+  }
+}
+
+function applySuppressions(risks, config) {
+  const now = new Date();
+  const ignored = [];
+  const accepted = [];
+  const active = [];
+  const today = now.toISOString().slice(0, 10);
+  for (const risk of risks) {
+    if (config.ignore.includes(risk.id)) {
+      ignored.push(risk);
+      continue;
+    }
+    const acceptance = config.accept.find((entry) => entry.rule === risk.id && (!entry.until || entry.until >= today));
+    if (acceptance) {
+      accepted.push({ ...risk, reason: acceptance.reason, until: acceptance.until });
+      continue;
+    }
+    active.push(risk);
+  }
+  return { active, ignored, accepted };
 }
 
 async function saveSettings(settings) {
@@ -512,7 +585,8 @@ async function scanWorkspace(workspace, options) {
   const tracked = Array.isArray(git.tracked) ? git.tracked : [];
   const rootEntries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
   const commands = await commandHints(root, rootEntries);
-  const projectType = await projectProfile(root, rootEntries);
+  const workspaceConfig = await readWorkspaceConfig(root);
+  const projectType = workspaceConfig.projectType || await projectProfile(root, rootEntries);
   const markers = {
     readme: rootEntries.some((entry) => /^readme(\.|$)/i.test(entry.name)),
     license: rootEntries.some((entry) => /^licen[cs]e(\.|$)/i.test(entry.name)),
@@ -587,29 +661,32 @@ async function scanWorkspace(workspace, options) {
     github: (git.isRepo ? 30 : 0) + (git.remote ? 30 : 0) + (git.dirty === 0 ? 20 : 0) + (git.tags && git.tags.length > 0 ? 20 : 0),
   };
   const risks = [];
-  if (!git.isRepo) risks.push({ severity: 'P2', text: '目录未初始化 Git，无法追踪变更、回滚或协作。' });
-  if (git.isRepo && git.dirty > 0) risks.push({ severity: 'P1', text: `工作区有 ${git.dirty} 个未提交变更，发布前需确认。` });
-  if (git.isRepo && !git.remote) risks.push({ severity: 'P2', text: '仓库没有 origin 远端，缺少异地备份/协作。' });
-  if (!markers.readme) risks.push({ severity: 'P1', text: '缺少 README，后来开发者难以启动项目。' });
-  if (!markers.ci) risks.push({ severity: 'P1', text: '缺少 CI，测试/构建容易回归。' });
-  if (workflows.some((wf) => wf.selfHosted && wf.pullRequest)) risks.push({ severity: 'P0', text: '自托管 Runner 被 pull_request 触发，公开仓库存在不可信代码执行风险。' });
-  if (secretFiles.length > 0) risks.push({ severity: 'P1', text: `发现疑似密钥文件：${secretFiles.slice(0, 5).join(', ')}（只检查了文件名，未读取内容）。` });
-  if (dangerous > 10) risks.push({ severity: 'P1', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 高危模式，需确认输入来源。` });
-  else if (dangerous > 0) risks.push({ severity: 'P2', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 模式，建议人工确认。` });
+  if (!git.isRepo) risks.push({ id: 'no-git', severity: 'P2', text: '目录未初始化 Git，无法追踪变更、回滚或协作。' });
+  if (git.isRepo && git.dirty > 0) risks.push({ id: 'dirty', severity: 'P1', text: `工作区有 ${git.dirty} 个未提交变更，发布前需确认。` });
+  if (git.isRepo && !git.remote) risks.push({ id: 'no-remote', severity: 'P2', text: '仓库没有 origin 远端，缺少异地备份/协作。' });
+  if (!markers.readme) risks.push({ id: 'readme', severity: 'P1', text: '缺少 README，后来开发者难以启动项目。' });
+  if (!markers.ci) risks.push({ id: 'ci', severity: 'P1', text: '缺少 CI，测试/构建容易回归。' });
+  if (workflows.some((wf) => wf.selfHosted && wf.pullRequest)) risks.push({ id: 'self-hosted-pr', severity: 'P0', text: '自托管 Runner 被 pull_request 触发，公开仓库存在不可信代码执行风险。' });
+  if (secretFiles.length > 0) risks.push({ id: 'secrets', severity: 'P1', text: `发现疑似密钥文件：${secretFiles.slice(0, 5).join(', ')}（只检查了文件名，未读取内容）。` });
+  if (dangerous > 10) risks.push({ id: 'dangerous-exec', severity: 'P1', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 高危模式，需确认输入来源。` });
+  else if (dangerous > 0) risks.push({ id: 'dangerous-exec', severity: 'P2', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 模式，建议人工确认。` });
   const significantArtifacts = artifacts.filter((item) => item.bytes >= 1024 * 1024);
   if (significantArtifacts.length > 0) {
     const huge = significantArtifacts.some((item) => item.bytes >= 1024 * 1024 * 1024);
-    risks.push({ severity: huge ? 'P1' : 'P2', text: `发现构建/缓存目录：${significantArtifacts.map((item) => item.name + ' ' + Math.round(item.bytes / 1024 / 1024) + 'MB').join(', ')}。` });
+    risks.push({ id: 'artifacts', severity: huge ? 'P1' : 'P2', text: `发现构建/缓存目录：${significantArtifacts.map((item) => item.name + ' ' + Math.round(item.bytes / 1024 / 1024) + 'MB').join(', ')}。` });
   }
-  if (dependencies.vulnerabilities.total > 0) risks.push({ severity: dependencies.vulnerabilities.total >= 5 ? 'P0' : 'P1', text: `${dependencies.vulnerabilities.tool || '依赖扫描'} 发现 ${dependencies.vulnerabilities.total} 个依赖漏洞。` });
-  if (dependencies.lockfiles.length === 0 && dependencies.manifests.length > 0) risks.push({ severity: 'P2', text: '依赖清单存在但没有检测到锁文件。' });
-  if (dependencies.unpinned > 5) risks.push({ severity: 'P2', text: `requirements 中有 ${dependencies.unpinned} 条非精确版本约束。` });
-  if (github && github.latestRelease && git.tags && git.tags.length > 0 && github.latestRelease !== git.tags[0]) risks.push({ severity: 'P2', text: `Git tag ${git.tags[0]} 与 GitHub latest release ${github.latestRelease} 不一致。` });
-  if (github && github.archived === true) risks.push({ severity: 'P2', text: 'GitHub 仓库已归档（archived）。' });
-  if (github && github.branchProtected === 'unprotected') risks.push({ severity: 'P2', text: 'GitHub 默认分支未检测到保护规则。' });
-  if (github && github.status === 'rate_limited') risks.push({ severity: 'P2', text: 'GitHub API 触发限流，部分健康数据不可用。' });
-  if (todo > 20) risks.push({ severity: 'P2', text: `源码中约 ${todo} 处 TODO/FIXME，建议建立清理计划。` });
-  const scoring = scoreWorkspace(dimensions, projectType, risks);
+  if (dependencies.vulnerabilities.total > 0) risks.push({ id: 'vulns', severity: dependencies.vulnerabilities.total >= 5 ? 'P0' : 'P1', text: `${dependencies.vulnerabilities.tool || '依赖扫描'} 发现 ${dependencies.vulnerabilities.total} 个依赖漏洞。` });
+  if (dependencies.lockfiles.length === 0 && dependencies.manifests.length > 0) risks.push({ id: 'lockfile', severity: 'P2', text: '依赖清单存在但没有检测到锁文件。' });
+  if (dependencies.unpinned > 5) risks.push({ id: 'unpinned', severity: 'P2', text: `requirements 中有 ${dependencies.unpinned} 条非精确版本约束。` });
+  if (github && github.latestRelease && git.tags && git.tags.length > 0 && github.latestRelease !== git.tags[0]) risks.push({ id: 'release-mismatch', severity: 'P2', text: `Git tag ${git.tags[0]} 与 GitHub latest release ${github.latestRelease} 不一致。` });
+  if (github && github.archived === true) risks.push({ id: 'archived', severity: 'P2', text: 'GitHub 仓库已归档（archived）。' });
+  if (github && github.branchProtected === 'unprotected') risks.push({ id: 'branch-protection', severity: 'P2', text: 'GitHub 默认分支未检测到保护规则。' });
+  if (github && github.status === 'rate_limited') risks.push({ id: 'rate-limit', severity: 'P2', text: 'GitHub API 触发限流，部分健康数据不可用。' });
+  if (todo > 20) risks.push({ id: 'todo', severity: 'P2', text: `源码中约 ${todo} 处 TODO/FIXME，建议建立清理计划。` });
+  const config = workspaceConfig;
+  const suppression = applySuppressions(risks, config);
+  const activeRisks = suppression.active;
+  const scoring = scoreWorkspace(dimensions, projectType, activeRisks);
   const finalScore = scoring.score;
   return {
     path: root,
@@ -628,12 +705,15 @@ async function scanWorkspace(workspace, options) {
     secretFiles,
     dimensions,
     projectType,
+    config,
     weights: scoring.weights,
     deductions: scoring.deductions,
     scoreMethod: 'v2-weighted',
     score: finalScore,
     rawScore: scoring.rawScore,
-    risks,
+    risks: activeRisks,
+    ignoredRisks: suppression.ignored,
+  acceptedRisks: suppression.accepted,
   };
 }
 
@@ -669,11 +749,17 @@ function renderReport(workspaces) {
   return lines.join('\n');
 }
 
-function mapLimit(items, limit, worker) {
+function mapLimit(items, limit, worker, hooks) {
   const results = new Array(items.length);
   let next = 0;
+  let completed = 0;
+  let cancelled = false;
   const run = async () => {
     while (next < items.length) {
+      if (hooks && typeof hooks.shouldCancel === 'function' && hooks.shouldCancel()) {
+        cancelled = true;
+        break;
+      }
       const index = next;
       next += 1;
       try {
@@ -681,44 +767,163 @@ function mapLimit(items, limit, worker) {
       } catch (error) {
         results[index] = { ok: false, error };
       }
+      completed += 1;
+      if (hooks && typeof hooks.onProgress === 'function') hooks.onProgress({ completed, total: items.length, index, path: items[index] && items[index].path });
     }
   };
-  return Promise.all(Array.from({ length: Math.min(limit, items.length) }, run)).then(() => results);
+  return Promise.all(Array.from({ length: Math.min(limit, items.length) }, run)).then(() => ({ results, cancelled }));
 }
 
-async function runScan() {
+async function runScan(scanOptions) {
+  const optionsIn = scanOptions || {};
   const startedAt = Date.now();
-  const settings = await loadSettings();
+  const settings = optionsIn.settings || await loadSettings();
   const options = { online: settings.online === true };
-  const discovered = await discoverWorkspaces(settings);
+  const discovered = optionsIn.discovered || await discoverWorkspaces(settings);
   const workspaces = [];
   const failures = [];
   const previousEntries = await loadHistory();
   const previous = previousEntries.length > 0 ? previousEntries[previousEntries.length - 1] : null;
-  const results = await mapLimit(discovered, 3, (workspace) => scanWorkspace(workspace, options));
-  for (let index = 0; index < results.length; index += 1) {
-    if (results[index].ok) workspaces.push(results[index].value);
-    else failures.push({ path: discovered[index].path, error: String((results[index].error && results[index].error.message) || results[index].error) });
+  const baseline = await loadBaseline();
+  const mapped = await mapLimit(discovered, 3, (workspace) => scanWorkspace(workspace, options), {
+    shouldCancel: optionsIn.shouldCancel,
+    onProgress: optionsIn.onProgress,
+  });
+  for (let index = 0; index < mapped.results.length; index += 1) {
+    const result = mapped.results[index];
+    if (!result) continue;
+    if (result.ok) workspaces.push(result.value);
+    else failures.push({ path: discovered[index].path, error: String((result.error && result.error.message) || result.error) });
   }
   workspaces.sort((left, right) => left.score - right.score);
   for (const workspace of workspaces) {
     const before = previous && Array.isArray(previous.workspaces) ? previous.workspaces.find((entry) => entry.path === workspace.path) : null;
     workspace.trend = { previousScore: before ? before.score : null, delta: before ? workspace.score - before.score : null };
+    const base = Array.isArray(baseline.workspaces) ? baseline.workspaces.find((entry) => entry.path === workspace.path) : null;
+    const activeIds = (workspace.risks || []).map((risk) => risk.id);
+    const baseIds = base && Array.isArray(base.riskIds) ? base.riskIds : [];
+    workspace.baseline = {
+      createdAt: baseline.createdAt || null,
+      score: base ? base.score : null,
+      delta: base ? workspace.score - base.score : null,
+      newRiskIds: base ? activeIds.filter((id) => !baseIds.includes(id)) : [],
+      resolvedRiskIds: base ? baseIds.filter((id) => !activeIds.includes(id)) : [],
+    };
   }
   const currentEntry = {
     at: Date.now(),
     workspaces: workspaces.map((workspace) => ({ path: workspace.path, score: workspace.score, dimensions: workspace.dimensions })),
   };
-  await saveHistory([...previousEntries, currentEntry]).catch(() => {});
+  if (!mapped.cancelled) await saveHistory([...previousEntries, currentEntry]).catch(() => {});
   return {
     generatedAt: Date.now(),
     durationMs: Date.now() - startedAt,
     settings,
+    cancelled: mapped.cancelled === true,
+    completed: mapped.results.filter(Boolean).length,
+    total: discovered.length,
     environment: { git: await commandExists('git'), online: options.online },
     workspaces,
     failures,
     discovered: discovered.length,
+    baseline: { createdAt: baseline.createdAt || null },
     report: renderReport(workspaces),
+  };
+}
+
+function createJobRoutes() {
+  const prune = () => {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [id, job] of SCAN_JOBS) if (job.finishedAt && job.finishedAt < cutoff) SCAN_JOBS.delete(id);
+  };
+  return async (req, res) => {
+    prune();
+    const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+    if (pathname === START_PATH) {
+      if (req.method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+      if (!requireToken(req, res)) return;
+      const id = randomBytes(12).toString('hex');
+      const settings = await loadSettings();
+      const discovered = await discoverWorkspaces(settings);
+      const job = { id, state: 'running', startedAt: Date.now(), total: discovered.length, progress: { completed: 0, total: discovered.length }, cancelRequested: false, result: null, error: null, finishedAt: 0 };
+      SCAN_JOBS.set(id, job);
+      (async () => {
+        try {
+          const result = await runScan({
+            settings,
+            discovered,
+            shouldCancel: () => job.cancelRequested,
+            onProgress: (progress) => { job.progress = progress; },
+          });
+          job.result = result;
+          job.state = result.cancelled ? 'cancelled' : 'done';
+        } catch (error) {
+          job.error = String((error && error.message) || error);
+          job.state = 'error';
+        } finally {
+          job.finishedAt = Date.now();
+        }
+      })();
+      sendJson(res, 202, { jobId: id, total: job.total });
+      return;
+    }
+    if (pathname === STATUS_PATH) {
+      if (req.method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+      if (!requireToken(req, res)) return;
+      const id = new URL(req.url || '/', 'http://localhost').searchParams.get('jobId') || '';
+      const job = SCAN_JOBS.get(id);
+      if (!job) { sendJson(res, 404, { error: 'job not found' }); return; }
+      sendJson(res, 200, { jobId: id, state: job.state, progress: job.progress, result: job.state === 'done' || job.state === 'cancelled' ? job.result : null, error: job.error });
+      return;
+    }
+    if (pathname === CANCEL_PATH) {
+      if (req.method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+      if (!requireToken(req, res)) return;
+      try {
+        const body = await readJsonBody(req);
+        const job = SCAN_JOBS.get(String(body.jobId || ''));
+        if (!job) { sendJson(res, 404, { error: 'job not found' }); return; }
+        job.cancelRequested = true;
+        sendJson(res, 200, { ok: true, jobId: job.id, state: job.state });
+      } catch (error) {
+        sendJson(res, 400, { error: 'invalid json' });
+      }
+      return;
+    }
+    sendJson(res, 404, { error: 'not found' });
+  };
+}
+
+function createBaselineRoute() {
+  return async (req, res) => {
+    if (!matchesPath(req, BASELINE_PATH)) { sendJson(res, 404, { error: 'not found' }); return; }
+    if (req.method === 'GET') {
+      if (!requireToken(req, res)) return;
+      sendJson(res, 200, await loadBaseline());
+      return;
+    }
+    if (req.method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+    if (!requireToken(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      if (body.action === 'clear') {
+        const baseline = { createdAt: 0, workspaces: [] };
+        await saveBaseline(baseline);
+        sendJson(res, 200, { ok: true, baseline });
+        return;
+      }
+      const workspaces = Array.isArray(body.workspaces) ? body.workspaces.slice(0, 100).map((workspace) => ({
+        path: String(workspace.path || ''),
+        score: Number(workspace.score) || 0,
+        riskIds: Array.isArray(workspace.riskIds) ? workspace.riskIds.filter((id) => typeof id === 'string') : [],
+        dimensions: workspace.dimensions && typeof workspace.dimensions === 'object' ? workspace.dimensions : {},
+      })).filter((workspace) => workspace.path.length > 0) : [];
+      const baseline = { createdAt: Date.now(), workspaces };
+      await saveBaseline(baseline);
+      sendJson(res, 200, { ok: true, baseline });
+    } catch (error) {
+      sendJson(res, 400, { error: 'invalid json' });
+    }
   };
 }
 
@@ -763,8 +968,13 @@ function createSettingsRoute() {
 
 function apply(ctx) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: AUTH_PATH, handler: createAuthRoute() }), 'workspace-audit: auth');
-  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SCAN_PATH, handler: createReadRoute(SCAN_PATH, () => runScan()) }), 'workspace-audit: scan');
+  const jobRoutes = createJobRoutes();
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: START_PATH, handler: jobRoutes }), 'workspace-audit: scan start');
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: STATUS_PATH, handler: jobRoutes }), 'workspace-audit: scan status');
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: CANCEL_PATH, handler: jobRoutes }), 'workspace-audit: scan cancel');
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SCAN_PATH, handler: createReadRoute(SCAN_PATH, () => runScan()) }), 'workspace-audit: scan sync');
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: HISTORY_PATH, handler: createReadRoute(HISTORY_PATH, () => loadHistory()) }), 'workspace-audit: history');
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: BASELINE_PATH, handler: createBaselineRoute() }), 'workspace-audit: baseline');
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SETTINGS_PATH, handler: createSettingsRoute() }), 'workspace-audit: settings');
 }
 
