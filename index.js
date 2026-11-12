@@ -33,9 +33,12 @@ function settingsFile() {
 async function loadSettings() {
   try {
     const raw = JSON.parse(await fs.readFile(settingsFile(), 'utf8'));
-    return { roots: Array.isArray(raw.roots) ? raw.roots.filter((entry) => typeof entry === 'string').slice(0, 30) : [] };
+    return {
+      roots: Array.isArray(raw.roots) ? raw.roots.filter((entry) => typeof entry === 'string').slice(0, 30) : [],
+      online: raw.online === true,
+    };
   } catch (error) {
-    return { roots: [] };
+    return { roots: [], online: false };
   }
 }
 
@@ -175,20 +178,30 @@ async function discoverWorkspaces(settings) {
 async function gitInfo(root) {
   const run = async (args) => {
     try {
-      const result = await execFileAsync('git', ['-C', root, ...args], { timeout: 8000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+      const result = await execFileAsync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-C', root, ...args], {
+        timeout: 8000,
+        windowsHide: true,
+        maxBuffer: 2 * 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
       return String(result.stdout || '').trim();
     } catch (error) {
       return '';
     }
   };
   const isRepo = (await run(['rev-parse', '--is-inside-work-tree'])) === 'true';
-  if (!isRepo) return { isRepo: false };
+  if (!isRepo) return { isRepo: false, untracked: [] };
   const remote = await run(['remote', 'get-url', 'origin']);
   const branch = await run(['branch', '--show-current']);
   const status = await run(['status', '--porcelain']);
   const last = await run(['log', '-1', '--format=%h|%ad|%s', '--date=short']);
   const tags = await run(['tag', '--sort=-v:refname']);
   const tracked = await run(['ls-files']);
+  const untracked = status
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('?? '))
+    .map((line) => line.slice(3).trim().replace(/^"(.*)"$/, '$1'))
+    .filter(Boolean);
   return {
     isRepo: true,
     remote,
@@ -197,6 +210,7 @@ async function gitInfo(root) {
     last,
     tags: tags.split(/\r?\n/).filter(Boolean).slice(0, 5),
     tracked: tracked.length === 0 ? [] : tracked.split(/\r?\n/),
+    untracked,
   };
 }
 
@@ -209,7 +223,8 @@ async function commandExists(command) {
   }
 }
 
-async function dependencyHealth(root) {
+async function dependencyHealth(root, options) {
+  const online = Boolean(options && options.online === true);
   const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
   const names = entries.map((entry) => entry.name);
   const manifests = names.filter((name) => /^(package\.json|pyproject\.toml|requirements.*\.txt|Cargo\.toml|go\.mod|pom\.xml|build\.gradle)$/i.test(name));
@@ -220,7 +235,8 @@ async function dependencyHealth(root) {
     const text = await fs.readFile(path.join(root, requirementFile), 'utf8').catch(() => '');
     unpinned += (text.match(/^[A-Za-z0-9_.-]+\s*(>=|~=|>)/gm) || []).length;
   }
-  const vulnerabilities = { status: 'skipped', total: 0, tool: '' };
+  const vulnerabilities = { status: online ? 'skipped' : 'offline', total: 0, tool: '' };
+  if (!online) return { manifests, lockfiles, unpinned, vulnerabilities };
   if (names.includes('package-lock.json')) {
     const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     if (await commandExists(npmCommand)) {
@@ -265,7 +281,8 @@ function parseGitHubRemote(remote) {
   return match ? { owner: match[1], repo: match[2] } : null;
 }
 
-async function githubHealth(git) {
+async function githubHealth(git, options) {
+  if (!options || options.online !== true) return null;
   const parsed = parseGitHubRemote(git.remote);
   if (!parsed) return null;
   const key = parsed.owner.toLowerCase() + '/' + parsed.repo.toLowerCase();
@@ -388,11 +405,11 @@ async function commandHints(root, entries) {
   return [...new Set(commands)].slice(0, 8);
 }
 
-async function scanWorkspace(workspace) {
+async function scanWorkspace(workspace, options) {
   const root = workspace.path;
   const git = await gitInfo(root);
-  const dependencies = await dependencyHealth(root);
-  const github = await githubHealth(git);
+  const dependencies = await dependencyHealth(root, options);
+  const github = await githubHealth(git, options);
   const tracked = Array.isArray(git.tracked) ? git.tracked : [];
   const rootEntries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
   const commands = await commandHints(root, rootEntries);
@@ -419,7 +436,13 @@ async function scanWorkspace(workspace) {
   let todo = 0;
   let dangerous = 0;
   const secretFiles = [];
-  for (const file of tracked.slice(0, 3000)) {
+  const secretCandidates = new Set([...tracked, ...(Array.isArray(git.untracked) ? git.untracked : [])]);
+  if (!git.isRepo) {
+    for (const entry of rootEntries) {
+      if (entry.isFile()) secretCandidates.add(entry.name);
+    }
+  }
+  for (const file of [...secretCandidates].slice(0, 3000)) {
     const sourceLike = /\.(py|js|mjs|cjs|ts|tsx|jsx|go|rs|c|h|cpp|java|kt|rb|php|sql)$/i.test(file);
     const basename = path.basename(file).toLowerCase();
     const secretLike = !sourceLike && (
@@ -486,6 +509,8 @@ async function scanWorkspace(workspace) {
   if (github && github.archived === true) risks.push({ severity: 'P2', text: 'GitHub 仓库已归档（archived）。' });
   if (github && github.branchProtected === false) risks.push({ severity: 'P2', text: 'GitHub 默认分支未检测到保护规则。' });
   if (todo > 20) risks.push({ severity: 'P2', text: `源码中约 ${todo} 处 TODO/FIXME，建议建立清理计划。` });
+  const rawScore = score;
+  const finalScore = risks.some((risk) => risk.severity === 'P0') ? Math.min(score, 59) : score;
   return {
     path: root,
     title: workspace.title,
@@ -502,7 +527,8 @@ async function scanWorkspace(workspace) {
     dangerous,
     secretFiles,
     dimensions,
-    score,
+    score: finalScore,
+    rawScore,
     risks,
   };
 }
@@ -517,7 +543,7 @@ function grade(score) {
 function renderReport(workspaces) {
   const lines = ['# Workspace Audit Report', '', `Generated: ${new Date().toISOString()}`, ''];
   for (const workspace of workspaces) {
-    lines.push(`## ${workspace.title}`, '', `- Path: \`${workspace.path}\``, `- Score: **${workspace.score}/100 (${grade(workspace.score)})**`, `- Git: ${workspace.git.isRepo ? workspace.git.branch + ' · ' + (workspace.git.remote || 'no remote') : 'not a repository'}`, `- Size: ${Math.round(workspace.size.bytes / 1024 / 1024)}MB`, `- Test files: ${workspace.testFiles}`, `- TODO/FIXME: ${workspace.todo}`, '');
+    lines.push(`## ${workspace.title}`, '', `- Path: \`${workspace.path}\``, `- Score: **${workspace.score}/100 (${grade(workspace.score)})**${workspace.rawScore !== workspace.score ? ' (raw ' + workspace.rawScore + ', capped by P0)' : ''}`, `- Git: ${workspace.git.isRepo ? workspace.git.branch + ' · ' + (workspace.git.remote || 'no remote') : 'not a repository'}`, `- Size: ${Math.round(workspace.size.bytes / 1024 / 1024)}MB`, `- Test files: ${workspace.testFiles}`, `- TODO/FIXME: ${workspace.todo}`, '');
     lines.push('### Dimensions', '');
     for (const [key, value] of Object.entries(workspace.dimensions)) lines.push(`- ${key}: ${value}/100`);
     if (Array.isArray(workspace.commands) && workspace.commands.length > 0) lines.push(`- Commands: ${workspace.commands.map((command) => '`' + command + '`').join(' · ')}`);
@@ -535,7 +561,9 @@ function renderReport(workspaces) {
 }
 
 async function runScan() {
+  const startedAt = Date.now();
   const settings = await loadSettings();
+  const options = { online: settings.online === true };
   const discovered = await discoverWorkspaces(settings);
   const workspaces = [];
   const failures = [];
@@ -543,7 +571,7 @@ async function runScan() {
   const previous = previousEntries.length > 0 ? previousEntries[previousEntries.length - 1] : null;
   for (const workspace of discovered) {
     try {
-      workspaces.push(await scanWorkspace(workspace));
+      workspaces.push(await scanWorkspace(workspace, options));
     } catch (error) {
       failures.push({ path: workspace.path, error: String((error && error.message) || error) });
     }
@@ -558,7 +586,16 @@ async function runScan() {
     workspaces: workspaces.map((workspace) => ({ path: workspace.path, score: workspace.score, dimensions: workspace.dimensions })),
   };
   await saveHistory([...previousEntries, currentEntry]).catch(() => {});
-  return { generatedAt: Date.now(), workspaces, failures, discovered: discovered.length, report: renderReport(workspaces) };
+  return {
+    generatedAt: Date.now(),
+    durationMs: Date.now() - startedAt,
+    settings,
+    environment: { git: await commandExists('git'), online: options.online },
+    workspaces,
+    failures,
+    discovered: discovered.length,
+    report: renderReport(workspaces),
+  };
 }
 
 function createSettingsRoute() {
@@ -588,7 +625,10 @@ function createSettingsRoute() {
         .map((entry) => String(entry).trim())
         .filter((entry) => entry.length > 0)
         .slice(0, 30);
-      const next = { roots };
+      const next = {
+        roots,
+        online: typeof body.online === 'boolean' ? body.online : current.online,
+      };
       await saveSettings(next);
       sendJson(res, 200, { ok: true, settings: next });
     } catch (error) {
