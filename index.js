@@ -19,6 +19,7 @@ const CANCEL_PATH = ROUTE + '/scan/cancel';
 const SETTINGS_PATH = ROUTE + '/settings';
 const HISTORY_PATH = ROUTE + '/history';
 const BASELINE_PATH = ROUTE + '/baseline';
+const HEALTH_PATH = ROUTE + '/health';
 const SCAN_JOBS = new Map();
 const MAX_WORKSPACES = 20;
 const SKIP_NAMES = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache', 'dist', 'build', 'target', '.next', '.nuxt', 'coverage']);
@@ -967,6 +968,27 @@ function createBaselineRoute() {
   };
 }
 
+function createHealthRoute() {
+  return async (req, res) => {
+    if (req.method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+    if (!requireToken(req, res)) return;
+    const memory = process.memoryUsage();
+    let historyEntries = 0;
+    let baselineEntries = 0;
+    try { historyEntries = (await loadHistory()).length; } catch (error) { historyEntries = 0; }
+    try { baselineEntries = (await loadBaseline()).workspaces.length; } catch (error) { baselineEntries = 0; }
+    sendJson(res, 200, {
+      version: '1.0.0',
+      uptimeSec: Math.round(process.uptime()),
+      memoryMB: { rss: Math.round(memory.rss / 1024 / 1024), heapUsed: Math.round(memory.heapUsed / 1024 / 1024) },
+      jobs: { active: [...SCAN_JOBS.values()].filter((job) => job.state === 'running').length, total: SCAN_JOBS.size },
+      caches: { git: GIT_CACHE.size, github: GITHUB_CACHE.size },
+      historyEntries,
+      baselineEntries,
+    });
+  };
+}
+
 function createSettingsRoute() {
   return async (req, res) => {
     if (!matchesPath(req, SETTINGS_PATH)) {
@@ -1015,6 +1037,7 @@ function apply(ctx) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SCAN_PATH, handler: createReadRoute(SCAN_PATH, () => runScan()) }), 'workspace-audit: scan sync');
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: HISTORY_PATH, handler: createReadRoute(HISTORY_PATH, () => loadHistory()) }), 'workspace-audit: history');
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: BASELINE_PATH, handler: createBaselineRoute() }), 'workspace-audit: baseline');
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: HEALTH_PATH, handler: createHealthRoute() }), 'workspace-audit: health');
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SETTINGS_PATH, handler: createSettingsRoute() }), 'workspace-audit: settings');
 }
 
