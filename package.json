@@ -1,11 +1,12 @@
 {
   "name": "@tomjerrygit/dsh-workspace-audit",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": false,
   "scripts": {
-    "test": "node --test test/audit.test.mjs test/routes.test.mjs",
+    "test": "node --test test/audit.test.mjs test/routes.test.mjs test/integration.test.mjs",
     "test:smoke": "node test/browser-smoke.mjs",
-    "test:soak": "node test/soak.mjs"
+    "test:soak": "node test/soak.mjs",
+    "market:check": "node scripts/market-check.mjs"
   },
   "description": "Stable local-first workspace health audit for DeepSeek Harness: Git, tests, CI, size, security hotspots, baselines, and bilingual handover reports.",
   "type": "module",
