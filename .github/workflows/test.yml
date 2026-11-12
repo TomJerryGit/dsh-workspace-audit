@@ -24,3 +24,14 @@ jobs:
           node-version: 24
       - name: Run tests
         run: node --test test/audit.test.mjs
+
+  browser-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run real browser smoke
+        run: node test/browser-smoke.mjs
