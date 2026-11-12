@@ -54,6 +54,15 @@ window.__ModuleLoader__.load({
       p0Capped: 'P0 风险已限制总分',
       projectType: '项目类型',
       deductions: '扣分明细',
+      progress: '扫描进度',
+      cancel: '取消扫描',
+      baseline: '设为基线',
+      baselineSet: '基线已保存',
+      ignored: '已忽略',
+      accepted: '已接受',
+      baselineDelta: '相对基线',
+      newRisks: '新增风险',
+      configHint: '可在项目根目录用 .workspace-audit.json 配置 ignore/accept。',
     };
     const en = {
       panel: 'Workspace Audit',
@@ -104,6 +113,15 @@ window.__ModuleLoader__.load({
       p0Capped: 'P0 caps the score',
       projectType: 'Project type',
       deductions: 'Score deductions',
+      progress: 'Scan progress',
+      cancel: 'Cancel scan',
+      baseline: 'Set baseline',
+      baselineSet: 'Baseline saved',
+      ignored: 'Ignored',
+      accepted: 'Accepted',
+      baselineDelta: 'vs baseline',
+      newRisks: 'New risks',
+      configHint: 'Configure ignore/accept in .workspace-audit.json at the project root.',
     };
     const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
     const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '14px', padding: '14px', background: 'var(--dsw-alias-bg-layer-1)' };
@@ -133,15 +151,47 @@ window.__ModuleLoader__.load({
       const [riskFilter, setRiskFilter] = React.useState('all');
       const [history, setHistory] = React.useState([]);
       const [copied, setCopied] = React.useState(false);
+      const [job, setJob] = React.useState(null);
+      const [progress, setProgress] = React.useState(null);
+      const [notice, setNotice] = React.useState('');
       const auth = () => token.length > 0 ? Promise.resolve(token) : fetch('/api/workspace-audit/auth').then((res) => res.json()).then((payload) => { setToken(payload.token); return payload.token; });
       const headers = (value) => ({ 'x-workspace-audit-token': value, accept: 'application/json' });
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const loadHistory = (value) => fetch('/api/workspace-audit/history', { headers: headers(value), cache: 'no-store' }).then((res) => res.ok ? res.json() : []).catch(() => []);
       const load = () => {
-        auth().then((value) => Promise.all([
-          fetch('/api/workspace-audit/scan', { headers: headers(value), cache: 'no-store' }).then((res) => { if (!res.ok) throw new Error(String(res.status)); return res.json(); }),
-          fetch('/api/workspace-audit/history', { headers: headers(value), cache: 'no-store' }).then((res) => res.ok ? res.json() : []).catch(() => []),
-        ]))
-          .then(([payload, entries]) => { setScan(payload); setHistory(Array.isArray(entries) ? entries : []); setState('ready'); })
-          .catch(() => setState('failed'));
+        auth().then(async (value) => {
+          setState('loading');
+          setProgress({ completed: 0, total: 0, state: 'running' });
+          const start = await fetch('/api/workspace-audit/scan/start', { method: 'POST', headers: headers(value), cache: 'no-store' });
+          if (!start.ok) throw new Error(String(start.status));
+          const started = await start.json();
+          setJob(started);
+          for (;;) {
+            await sleep(500);
+            const status = await fetch('/api/workspace-audit/scan/status?jobId=' + encodeURIComponent(started.jobId), { headers: headers(value), cache: 'no-store' });
+            if (!status.ok) throw new Error(String(status.status));
+            const payload = await status.json();
+            setProgress(payload.progress);
+            if (payload.state === 'done' || payload.state === 'cancelled') {
+              setScan(payload.result);
+              setHistory(await loadHistory(value));
+              setState('ready');
+              setJob(null);
+              return;
+            }
+            if (payload.state === 'error') throw new Error(payload.error || 'scan failed');
+          }
+        }).catch(() => setState('failed'));
+      };
+      const cancel = () => {
+        if (!job) return;
+        auth().then((value) => fetch('/api/workspace-audit/scan/cancel', { method: 'POST', headers: { ...headers(value), 'content-type': 'application/json' }, body: JSON.stringify({ jobId: job.jobId }) })).catch(() => {});
+      };
+      const setBaseline = () => {
+        if (!scan) return;
+        auth().then((value) => fetch('/api/workspace-audit/baseline', { method: 'POST', headers: { ...headers(value), 'content-type': 'application/json' }, body: JSON.stringify({ workspaces: (scan.workspaces || []).map((workspace) => ({ path: workspace.path, score: workspace.score, riskIds: (workspace.risks || []).map((risk) => risk.id), dimensions: workspace.dimensions })) }) }))
+          .then((res) => { if (!res.ok) throw new Error(String(res.status)); setNotice(t('baselineSet')); return load(); })
+          .catch(() => setNotice(t('failed')));
       };
       const addRoot = () => {
         auth().then((value) => fetch('/api/workspace-audit/settings', { method: 'POST', headers: { ...headers(value), 'content-type': 'application/json' }, body: JSON.stringify({ add: rootDraft.trim() }) }))
@@ -177,7 +227,16 @@ window.__ModuleLoader__.load({
         URL.revokeObjectURL(link.href);
       };
       React.useEffect(() => { load(); }, []);
-      if (state === 'loading') return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('scanning')));
+      if (state === 'loading') return h('div', { style: page },
+        h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')),
+        h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('scanning')),
+        progress ? h('div', { style: { maxWidth: '420px' } },
+          h('div', { style: { height: '8px', borderRadius: '999px', background: 'var(--dsw-alias-bg-layer-2)', overflow: 'hidden' } },
+            h('div', { style: { width: (progress.total > 0 ? Math.round(progress.completed / progress.total * 100) : 5) + '%', height: '100%', background: 'var(--dshqn-accent, var(--dsw-alias-brand-primary))' } })),
+          h('p', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, t('progress') + '：' + progress.completed + ' / ' + progress.total),
+        ) : null,
+        job ? h('button', { type: 'button', onClick: cancel }, t('cancel')) : null,
+      );
       if (state === 'failed' || scan === null) return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('failed')), h('button', { type: 'button', onClick: load }, t('scan')));
       const workspaces = Array.isArray(scan.workspaces) ? scan.workspaces : [];
       const filteredWorkspaces = workspaces.filter((workspace) => riskFilter === 'all' || (workspace.risks || []).some((risk) => risk.severity === riskFilter));
@@ -205,7 +264,10 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', onClick: copy }, copied ? t('copied') : t('copy')),
           h('button', { type: 'button', onClick: download }, t('download')),
           h('button', { type: 'button', onClick: downloadHtml }, t('html')),
+          h('button', { type: 'button', onClick: setBaseline }, t('baseline')),
         ),
+        notice.length > 0 ? h('p', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, notice) : null,
+        h('p', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, t('configHint')),
         workspaces.length === 0 ? h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('empty')) : null,
         h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
           t('duration') + '：' + Math.round((scan.durationMs || 0) / 1000) + 's · ' + (scan.settings.online ? t('online') : t('offline')) +
@@ -261,6 +323,18 @@ window.__ModuleLoader__.load({
             ),
             workspace.rawScore !== undefined && workspace.rawScore !== workspace.score
               ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)', marginTop: '4px' } }, t('p0Capped') + '：' + workspace.rawScore + ' → ' + workspace.score)
+              : null,
+            workspace.baseline && workspace.baseline.score !== null
+              ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } },
+                  t('baselineDelta') + '：' + (workspace.baseline.delta >= 0 ? '+' : '') + workspace.baseline.delta +
+                  (workspace.baseline.newRiskIds.length > 0 ? ' · ' + t('newRisks') + ' ' + workspace.baseline.newRiskIds.join(', ') : ''),
+                )
+              : null,
+            (workspace.ignoredRisks && workspace.ignoredRisks.length > 0) || (workspace.acceptedRisks && workspace.acceptedRisks.length > 0)
+              ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } },
+                  t('ignored') + ' ' + (workspace.ignoredRisks || []).length + ' · ' + t('accepted') + ' ' + (workspace.acceptedRisks || []).length +
+                  ((workspace.acceptedRisks || []).length > 0 ? ' · ' + (workspace.acceptedRisks || []).map((risk) => risk.id + (risk.until ? ' until ' + risk.until : '')).join(', ') : ''),
+                )
               : null,
             Array.isArray(workspace.commands) && workspace.commands.length > 0
               ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } }, t('commandsTitle') + '：' + workspace.commands.join(' · '))
