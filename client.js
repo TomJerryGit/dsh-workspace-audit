@@ -69,6 +69,8 @@ window.__ModuleLoader__.load({
       issues: 'Issue',
       prs: 'PR',
       until: '至',
+      json: '下载 JSON',
+      feedback: '报告误报',
       dimensions: { documentation: '文档', development: '开发', debugging: '调试', performance: '性能', functionality: '功能', security: '安全', github: 'GitHub' },
     };
     const en = {
@@ -135,6 +137,8 @@ window.__ModuleLoader__.load({
       issues: 'Issues',
       prs: 'PRs',
       until: 'until',
+      json: 'Download JSON',
+      feedback: 'Report false positive',
       dimensions: { documentation: 'Docs', development: 'Dev', debugging: 'Debug', performance: 'Perf', functionality: 'Features', security: 'Security', github: 'GitHub' },
     };
     const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
@@ -238,6 +242,20 @@ window.__ModuleLoader__.load({
         link.click();
         URL.revokeObjectURL(link.href);
       };
+      const downloadJson = () => {
+        if (!scan) return;
+        const payload = { ...scan, report: undefined, reportEn: undefined, handover: undefined, handoverEn: undefined };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'workspace-audit.json';
+        link.click();
+        URL.revokeObjectURL(link.href);
+      };
+      const reportFalsePositive = () => {
+        const title = encodeURIComponent('[false-positive] workspace-audit');
+        window.open('https://github.com/TomJerryGit/dsh-workspace-audit/issues/new?template=bug_report.yml&title=' + title, '_blank');
+      };
       const printReport = () => {
         if (!scan) return;
         const report = isZh ? scan.report : (scan.reportEn || scan.report);
@@ -305,7 +323,9 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', onClick: download }, t('download')),
           h('button', { type: 'button', onClick: downloadHtml }, t('html')),
           h('button', { type: 'button', onClick: downloadHandover }, t('handover')),
+          h('button', { type: 'button', onClick: downloadJson }, t('json')),
           h('button', { type: 'button', onClick: printReport }, t('pdf')),
+          h('button', { type: 'button', onClick: reportFalsePositive }, t('feedback')),
           h('button', { type: 'button', onClick: setBaseline }, t('baseline')),
         ),
         notice.length > 0 ? h('p', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, notice) : null,
