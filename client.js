@@ -1,0 +1,174 @@
+window.__ModuleLoader__.load({
+  id: '@tomjerrygit/dsh-workspace-audit',
+  factory(require) {
+    const React = require('react');
+    const h = React.createElement;
+    const PANEL_ID = 'workspace-audit';
+    const NS = 'workspaceAudit';
+    const zh = {
+      panel: '工作区体检',
+      title: '工作区体检',
+      subtitle: '本地只读扫描：Git、测试、CI、体积、安全与交接报告',
+      scan: '开始体检',
+      scanning: '扫描中…',
+      refresh: '刷新',
+      addRoot: '添加工作区路径',
+      rootPlaceholder: '例如 D:\\MyProject',
+      add: '添加',
+      empty: '暂无工作区。先添加一个目录，或等待 DSH 工作区注册表出现。',
+      score: '综合评分',
+      workspaces: '工作区',
+      p0: 'P0 风险',
+      risks: '风险',
+      dimensions: '维度',
+      report: '交接报告',
+      copy: '复制报告',
+      copied: '已复制',
+      download: '下载 Markdown',
+      failed: '扫描失败',
+      loading: '正在准备…',
+      path: '路径',
+      git: 'Git',
+      size: '体积',
+      tests: '测试文件',
+      todo: 'TODO',
+      noRisk: '未发现阻塞风险',
+      commands: '启动/测试入口见各项目 README 与报告。',
+    };
+    const en = {
+      panel: 'Workspace Audit',
+      title: 'Workspace Audit',
+      subtitle: 'Read-only local scan: Git, tests, CI, size, security, handover report',
+      scan: 'Run audit',
+      scanning: 'Scanning…',
+      refresh: 'Refresh',
+      addRoot: 'Add workspace path',
+      rootPlaceholder: 'e.g. D:\\MyProject',
+      add: 'Add',
+      empty: 'No workspaces yet. Add a directory or wait for the DSH workspace registry.',
+      score: 'Overall score',
+      workspaces: 'Workspaces',
+      p0: 'P0 risks',
+      risks: 'Risks',
+      dimensions: 'Dimensions',
+      report: 'Handover report',
+      copy: 'Copy report',
+      copied: 'Copied',
+      download: 'Download Markdown',
+      failed: 'Scan failed',
+      loading: 'Preparing…',
+      path: 'Path',
+      git: 'Git',
+      size: 'Size',
+      tests: 'Test files',
+      todo: 'TODO',
+      noRisk: 'No blocking risks found',
+      commands: 'See each project README and report for run/test commands.',
+    };
+    const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
+    const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '14px', padding: '14px', background: 'var(--dsw-alias-bg-layer-1)' };
+    const money = (bytes) => {
+      const value = Number(bytes) || 0;
+      if (value < 1024 * 1024) return Math.round(value / 1024) + 'KB';
+      if (value < 1024 * 1024 * 1024) return (value / 1024 / 1024).toFixed(1) + 'MB';
+      return (value / 1024 / 1024 / 1024).toFixed(1) + 'GB';
+    };
+    const grade = (score) => (score >= 85 ? 'A' : score >= 70 ? 'B' : score >= 55 ? 'C' : 'D');
+    const color = (score) => (score >= 85 ? 'var(--dsw-alias-state-success-primary)' : score >= 70 ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-state-error-primary)');
+
+    function Panel() {
+      const t = (key) => { const dict = /^zh/i.test(String(window.navigator && window.navigator.language)) ? zh : en; return dict[key] || key; };
+      const [token, setToken] = React.useState('');
+      const [scan, setScan] = React.useState(null);
+      const [state, setState] = React.useState('loading');
+      const [rootDraft, setRootDraft] = React.useState('');
+      const [copied, setCopied] = React.useState(false);
+      const auth = () => token.length > 0 ? Promise.resolve(token) : fetch('/api/workspace-audit/auth').then((res) => res.json()).then((payload) => { setToken(payload.token); return payload.token; });
+      const headers = (value) => ({ 'x-workspace-audit-token': value, accept: 'application/json' });
+      const load = () => {
+        auth().then((value) => fetch('/api/workspace-audit/scan', { headers: headers(value), cache: 'no-store' }))
+          .then((res) => { if (!res.ok) throw new Error(String(res.status)); return res.json(); })
+          .then((payload) => { setScan(payload); setState('ready'); })
+          .catch(() => setState('failed'));
+      };
+      const addRoot = () => {
+        auth().then((value) => fetch('/api/workspace-audit/settings', { method: 'POST', headers: { ...headers(value), 'content-type': 'application/json' }, body: JSON.stringify({ add: rootDraft.trim() }) }))
+          .then(() => { setRootDraft(''); return load(); })
+          .catch(() => {});
+      };
+      const copy = () => { if (!scan) return; navigator.clipboard.writeText(scan.report).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
+      const download = () => {
+        if (!scan) return;
+        const blob = new Blob([scan.report], { type: 'text/markdown;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'workspace-audit.md';
+        link.click();
+        URL.revokeObjectURL(link.href);
+      };
+      React.useEffect(() => { load(); }, []);
+      if (state === 'loading') return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('scanning')));
+      if (state === 'failed' || scan === null) return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('failed')), h('button', { type: 'button', onClick: load }, t('scan')));
+      const workspaces = Array.isArray(scan.workspaces) ? scan.workspaces : [];
+      const avg = workspaces.length > 0 ? Math.round(workspaces.reduce((sum, workspace) => sum + workspace.score, 0) / workspaces.length) : 0;
+      const p0 = workspaces.reduce((sum, workspace) => sum + workspace.risks.filter((risk) => risk.severity === 'P0').length, 0);
+      return h('div', { style: page },
+        h('header', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+          h('div', { style: { flex: '1 1 auto' } }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { margin: '4px 0 0', color: 'var(--dsw-alias-label-secondary)', fontSize: '13px' } }, t('subtitle'))),
+          h('button', { type: 'button', onClick: load, style: { padding: '6px 12px', borderRadius: '8px' } }, t('scan')),
+        ),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' } },
+          h('div', { style: card }, h('div', { style: { fontSize: '24px', fontWeight: 700, color: color(avg) } }, avg + ' / ' + grade(avg)), h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, t('score'))),
+          h('div', { style: card }, h('div', { style: { fontSize: '24px', fontWeight: 700 } }, String(workspaces.length)), h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, t('workspaces'))),
+          h('div', { style: card }, h('div', { style: { fontSize: '24px', fontWeight: 700, color: 'var(--dsw-alias-state-error-primary)' } }, String(p0)), h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, t('p0'))),
+        ),
+        h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+          h('input', { value: rootDraft, placeholder: t('rootPlaceholder'), onChange: (event) => setRootDraft(event.target.value), style: { flex: '1 1 260px', padding: '6px 8px' } }),
+          h('button', { type: 'button', onClick: addRoot, disabled: rootDraft.trim().length === 0 }, t('add')),
+          h('button', { type: 'button', onClick: copy }, copied ? t('copied') : t('copy')),
+          h('button', { type: 'button', onClick: download }, t('download')),
+        ),
+        workspaces.length === 0 ? h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('empty')) : null,
+        ...workspaces.map((workspace) => {
+          const risks = workspace.risks || [];
+          return h('section', { key: workspace.path, style: card },
+            h('div', { style: { display: 'flex', gap: '10px', alignItems: 'baseline', flexWrap: 'wrap' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', flex: '1 1 auto' } }, workspace.title),
+              h('strong', { style: { fontSize: '20px', color: color(workspace.score) } }, workspace.score + ' ' + grade(workspace.score)),
+            ),
+            h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', margin: '4px 0 8px' } }, t('path') + '：' + workspace.path),
+            h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '12px' } },
+              h('span', null, t('git') + ': ' + (workspace.git.isRepo ? workspace.git.branch || 'repo' : 'none')),
+              h('span', null, t('size') + ': ' + money(workspace.size.bytes)),
+              h('span', null, t('tests') + ': ' + workspace.testFiles),
+              h('span', null, t('todo') + ': ' + workspace.todo),
+            ),
+            h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '8px' } },
+              Object.entries(workspace.dimensions || {}).map(([key, value]) => h('span', { key, style: { fontSize: '10px', padding: '1px 6px', borderRadius: '999px', background: 'var(--dsw-alias-bg-layer-2)' } }, key + ' ' + value)),
+            ),
+            h('div', { style: { marginTop: '10px' } },
+              risks.length === 0 ? h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-state-success-primary)' } }, t('noRisk')) : risks.map((risk, index) =>
+                h('div', { key: index, style: { fontSize: '12px', marginTop: '4px', color: risk.severity === 'P0' ? 'var(--dsw-alias-state-error-primary)' : risk.severity === 'P1' ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-label-secondary)' } }, '[' + risk.severity + '] ' + risk.text),
+              ),
+            ),
+          );
+        }),
+        h('p', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, t('commands')),
+      );
+    }
+
+    function SidebarIcon(props) {
+      return h('svg', { width: props.size || 18, height: props.size || 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+        h('path', { d: 'M4 19V5' }), h('path', { d: 'M4 12h5l2 3h9' }), h('path', { d: 'M9 7h5' }), h('path', { d: 'M9 10h7' }));
+    }
+
+    function apply(ctx) {
+      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'workspace-audit: dictionaries');
+      const t = ctx.locale.bind(NS);
+      ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, Panel));
+      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 22, label: () => t('panel'), locale: NS }, SidebarIcon));
+    }
+
+    return { inject: ['slots', 'locale', 'layout'], apply };
+  },
+});
