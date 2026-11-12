@@ -4,7 +4,7 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 
 ## Status
 
-`1.1.x` is stable for **Windows and Linux**. **macOS is experimental/untested.** This is an engineering hygiene check, not a professional security audit.
+`1.2.x` is stable for **Windows and Linux**. **macOS is experimental/untested.** This is an engineering hygiene check, not a professional security audit.
 
 ## What it checks
 
@@ -20,7 +20,8 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - Workspace-specific `.workspace-audit.json` supports ignore rules, accepted risks, expiry dates, and project-type overrides.
 - Baseline snapshots and background scan jobs with progress/cancel.
 - Bilingual (Chinese/English) UI, reports, risk explanations, and handover documents.
-- Markdown/HTML/print-to-PDF exports and an average-score trend chart.
+- Markdown/HTML/JSON exports, print-to-PDF, and an average-score trend chart.
+- False-positive reporting link opens a prefilled GitHub issue template.
 - P0 findings cap the overall score at 59 so a high raw score cannot hide a blocking risk.
 - Git commands run with `core.fsmonitor=false` and `core.untrackedCache=false`; untracked secret filenames are included.
 - Failures, Git availability, scan duration, and offline state are shown in the panel.
@@ -67,8 +68,9 @@ Create `.workspace-audit.json` in a project root:
 ## Handover, reports and localization
 
 - **Download handover**: generates `START_HERE.md` with run/test commands, files to read first, and current risks.
-- **Markdown / HTML export**: localized report and comparison table.
+- **Markdown / HTML / JSON export**: localized report, machine-readable scan JSON, and comparison table.
 - **Export PDF**: opens a print-ready report; use the browser's Save as PDF.
+- **Report false positive**: opens the GitHub issue form prefilled with the plugin version context.
 - **Average score trend**: chart over saved scan history.
 - **Chinese/English**: UI labels, dimensions, risk text, reports, and handover documents follow the browser locale.
 
