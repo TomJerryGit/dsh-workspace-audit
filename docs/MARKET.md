@@ -1,7 +1,7 @@
 # Market observation
 
 Started: 2026-11-12  
-Release: v1.0.0
+Release: v1.1.0
 
 ## Launch baseline
 
