@@ -1,0 +1,3 @@
+- insert:
+    - id: workspace-audit
+      name: '@tomjerrygit/dsh-workspace-audit'
