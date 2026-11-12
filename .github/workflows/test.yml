@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 24
       - name: Run tests
-        run: node --test test/audit.test.mjs test/routes.test.mjs
+        run: node --test test/audit.test.mjs test/routes.test.mjs test/integration.test.mjs
 
   browser-smoke:
     runs-on: windows-latest
