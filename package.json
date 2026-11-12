@@ -1,9 +1,9 @@
 {
   "name": "@tomjerrygit/dsh-workspace-audit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": false,
   "scripts": {
-    "test": "node --test test/audit.test.mjs",
+    "test": "node --test test/audit.test.mjs test/routes.test.mjs",
     "test:smoke": "node test/browser-smoke.mjs",
     "test:soak": "node test/soak.mjs"
   },
@@ -28,6 +28,7 @@
     "icon.svg",
     "locale/*.json",
     "README.md",
+    "SECURITY.md",
     "LICENSE",
     "CHANGELOG.md",
     "docs/"
