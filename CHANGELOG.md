@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.0
+
+- Detect ignored/nested secret filenames via bounded filesystem scan (still filename-only)
+- Project-type detection handles PyQt/PySide desktop apps and pyproject app entry points
+- Git cache refreshes dirty status on every scan instead of relying on root mtime
+- GitHub Search API status is visible (`rate_limited` / `error` / `unavailable`)
+- Dependency audit aggregates npm/pnpm/yarn/cargo/pip results instead of stopping at the first lockfile
+- HTML export is fully localized; table headers, dimensions and risk text follow locale
+- Accepted/ignored risks adjust mapped dimension points
+- Artifact size has a larger performance penalty
+- Added route/job/baseline/health tests and a Git fsmonitor hardening regression check
+- Health endpoint reads version from package.json
+- SECURITY.md included in the npm package
+- README explicitly scopes 1.1 stable support to Windows/Linux; macOS remains experimental
+
 ## v1.0.0
 
 First stable release.
