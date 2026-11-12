@@ -52,6 +52,8 @@ window.__ModuleLoader__.load({
       failures: '扫描失败',
       gitMissing: '未检测到 Git',
       p0Capped: 'P0 风险已限制总分',
+      projectType: '项目类型',
+      deductions: '扣分明细',
     };
     const en = {
       panel: 'Workspace Audit',
@@ -100,6 +102,8 @@ window.__ModuleLoader__.load({
       failures: 'Scan failures',
       gitMissing: 'Git not detected',
       p0Capped: 'P0 caps the score',
+      projectType: 'Project type',
+      deductions: 'Score deductions',
     };
     const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
     const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '14px', padding: '14px', background: 'var(--dsw-alias-bg-layer-1)' };
@@ -232,7 +236,13 @@ window.__ModuleLoader__.load({
               sparkline(historyFor(workspace.path)),
               h('strong', { style: { fontSize: '20px', color: color(workspace.score) } }, workspace.score + ' ' + grade(workspace.score)),
             ),
-            h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', margin: '4px 0 8px' } }, t('path') + '：' + workspace.path),
+            h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', margin: '4px 0 8px' } }, t('path') + '：' + workspace.path + ' · ' + t('projectType') + '：' + (workspace.projectType || 'app')),
+            workspace.deductions && workspace.deductions.length > 0
+              ? h('details', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                  h('summary', null, t('deductions')),
+                  ...workspace.deductions.slice(0, 5).map((deduction) => h('div', { key: deduction.dimension + deduction.points }, deduction.dimension + '：-' + deduction.points + (deduction.reason ? ' · ' + deduction.reason : ''))),
+                )
+              : null,
             h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '12px' } },
               h('span', null, t('git') + ': ' + (workspace.git.isRepo ? workspace.git.branch || 'repo' : 'none')),
               h('span', null, t('size') + ': ' + money(workspace.size.bytes)),
@@ -241,12 +251,12 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } },
               workspace.dependencies && workspace.dependencies.manifests.length > 0
-                ? h('span', null, t('deps') + ': ' + (workspace.dependencies.lockfiles.length > 0 ? 'lock ✓' : t('noLock')) + ' · ' + t('vulns') + ' ' + workspace.dependencies.vulnerabilities.total + (workspace.dependencies.vulnerabilities.status === 'offline' ? ' (' + t('offline') + ')' : workspace.dependencies.vulnerabilities.status === 'skipped' ? ' (skipped)' : ''))
+                ? h('span', null, t('deps') + ': ' + (workspace.dependencies.lockfiles.length > 0 ? 'lock ✓' : t('noLock')) + ' · ' + t('vulns') + ' ' + workspace.dependencies.vulnerabilities.total + (workspace.dependencies.vulnerabilities.status === 'offline' ? ' (' + t('offline') + ')' : workspace.dependencies.vulnerabilities.status === 'skipped' ? ' (skipped)' : workspace.dependencies.vulnerabilities.status === 'error' ? ' (error)' : workspace.dependencies.vulnerabilities.tool ? ' (' + workspace.dependencies.vulnerabilities.tool + ')' : ''))
                 : null,
               !scan.settings.online
                 ? h('span', null, t('github') + ': ' + t('offline'))
                 : workspace.github
-                  ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
+                  ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · issues ' + (workspace.github.openIssues ?? '—') + ' / PRs ' + (workspace.github.openPRs ?? '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
                   : null,
             ),
             workspace.rawScore !== undefined && workspace.rawScore !== workspace.score
