@@ -2,6 +2,10 @@
 
 Local-first workspace health audit for DeepSeek Harness. Read-only by design; no code is uploaded and no LLM call is required.
 
+## Status
+
+`1.1.x` is stable for **Windows and Linux**. **macOS is experimental/untested.** This is an engineering hygiene check, not a professional security audit.
+
 ## What it checks
 
 - Git: repository, remote, branch, dirty count, last commit, tags
@@ -71,11 +75,12 @@ Create `.workspace-audit.json` in a project root:
 ## Tests
 
 ```sh
-node --test test/audit.test.mjs
+node --test test/audit.test.mjs test/routes.test.mjs
 node test/browser-smoke.mjs
+node test/soak.mjs
 ```
 
-The unit suite uses a self-contained fixture workspace (`test/fixtures/basic`) and checks scanning, secrets, workflow risk, dependency health, report rendering, GitHub classification, and grading. The browser smoke boots the real `client.js` with local React UMD files, then checks rendering, risk filters, failures and export controls without network access.
+The unit suites cover scanner rules, config suppression, project typing, secrets, dependencies, GitHub classification, host routes, jobs, baseline, health, and Git hardening. The browser smoke boots the real `client.js` with local React UMD files, then checks rendering, risk filters, failures and export controls without network access.
 
 ## Install
 
