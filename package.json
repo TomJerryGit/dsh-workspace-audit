@@ -1,0 +1,64 @@
+{
+  "name": "@tomjerrygit/dsh-workspace-audit",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Local-first workspace health audit for DeepSeek Harness: Git, tests, CI, size, security hotspots, and a Markdown handover report.",
+  "type": "module",
+  "engines": {
+    "dsh": ">=0.2.0-rc.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "author": {
+    "name": "TomJerryGit"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TomJerryGit/dsh-workspace-audit.git"
+  },
+  "homepage": "https://github.com/TomJerryGit/dsh-workspace-audit#readme",
+  "bugs": {
+    "url": "https://github.com/TomJerryGit/dsh-workspace-audit/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "workspace",
+    "audit",
+    "health",
+    "handover",
+    "security"
+  ]
+}
