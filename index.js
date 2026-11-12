@@ -14,6 +14,7 @@ const ROUTE = '/api/workspace-audit';
 const AUTH_PATH = ROUTE + '/auth';
 const SCAN_PATH = ROUTE + '/scan';
 const SETTINGS_PATH = ROUTE + '/settings';
+const HISTORY_PATH = ROUTE + '/history';
 const MAX_WORKSPACES = 20;
 const SKIP_NAMES = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache', 'dist', 'build', 'target', '.next', '.nuxt', 'coverage']);
 const ARTIFACT_NAMES = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache', 'dist', 'build', 'target', '.next', '.nuxt', 'coverage', 'release-archive', 'test+files', 'BeeOffice-v5.2.3-windows', 'BeeOffice_logs']);
@@ -358,6 +359,35 @@ function testFilePattern(name) {
   return /(^|\/)(tests?\/|test_[^/]+\.py$|[^/]+\.(test|spec)\.(js|ts|jsx|tsx|mjs)$|.*_test\.(go|rs|py)$)/i.test(name);
 }
 
+async function commandHints(root, entries) {
+  const names = entries.map((entry) => entry.name);
+  const commands = [];
+  const packageFile = names.includes('package.json') ? await fs.readFile(path.join(root, 'package.json'), 'utf8').catch(() => '') : '';
+  if (packageFile.length > 0) {
+    try {
+      const pkg = JSON.parse(packageFile);
+      const scripts = pkg.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {};
+      commands.push('npm install');
+      if (scripts.test) commands.push('npm test');
+      if (scripts.dev) commands.push('npm run dev');
+      else if (scripts.start) commands.push('npm start');
+      if (scripts.build) commands.push('npm run build');
+    } catch (error) {
+      commands.push('npm install');
+    }
+  }
+  const requirement = names.find((name) => /^requirements.*\.txt$/i.test(name));
+  if (requirement) {
+    commands.push('python -m venv .venv', 'pip install -r ' + requirement);
+    if (names.some((name) => /^(pytest\.ini|tox\.ini)$/i.test(name)) || names.includes('pyproject.toml')) commands.push('pytest');
+  }
+  if (names.includes('pyproject.toml') && requirement === undefined) commands.push('pip install -e .');
+  if (names.includes('Cargo.toml')) commands.push('cargo test');
+  if (names.includes('go.mod')) commands.push('go test ./...');
+  if (names.some((name) => /^(docker-compose\.ya?ml|dockerfile)$/i.test(name))) commands.push('docker build .');
+  return [...new Set(commands)].slice(0, 8);
+}
+
 async function scanWorkspace(workspace) {
   const root = workspace.path;
   const git = await gitInfo(root);
@@ -365,6 +395,7 @@ async function scanWorkspace(workspace) {
   const github = await githubHealth(git);
   const tracked = Array.isArray(git.tracked) ? git.tracked : [];
   const rootEntries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  const commands = await commandHints(root, rootEntries);
   const markers = {
     readme: rootEntries.some((entry) => /^readme(\.|$)/i.test(entry.name)),
     license: rootEntries.some((entry) => /^licen[cs]e(\.|$)/i.test(entry.name)),
@@ -458,6 +489,7 @@ async function scanWorkspace(workspace) {
   return {
     path: root,
     title: workspace.title,
+    commands,
     git,
     markers,
     workflowFiles,
@@ -488,6 +520,7 @@ function renderReport(workspaces) {
     lines.push(`## ${workspace.title}`, '', `- Path: \`${workspace.path}\``, `- Score: **${workspace.score}/100 (${grade(workspace.score)})**`, `- Git: ${workspace.git.isRepo ? workspace.git.branch + ' · ' + (workspace.git.remote || 'no remote') : 'not a repository'}`, `- Size: ${Math.round(workspace.size.bytes / 1024 / 1024)}MB`, `- Test files: ${workspace.testFiles}`, `- TODO/FIXME: ${workspace.todo}`, '');
     lines.push('### Dimensions', '');
     for (const [key, value] of Object.entries(workspace.dimensions)) lines.push(`- ${key}: ${value}/100`);
+    if (Array.isArray(workspace.commands) && workspace.commands.length > 0) lines.push(`- Commands: ${workspace.commands.map((command) => '`' + command + '`').join(' · ')}`);
     if (workspace.trend && workspace.trend.previousScore !== null) lines.push(`- Trend: ${workspace.trend.delta >= 0 ? '+' : ''}${workspace.trend.delta} from ${workspace.trend.previousScore}`);
     if (workspace.dependencies && (workspace.dependencies.manifests.length > 0 || workspace.dependencies.lockfiles.length > 0)) {
       lines.push(`- Dependencies: manifests=${workspace.dependencies.manifests.join(',') || 'none'}; lockfiles=${workspace.dependencies.lockfiles.join(',') || 'none'}; vulnerabilities=${workspace.dependencies.vulnerabilities.total} (${workspace.dependencies.vulnerabilities.status})`);
@@ -567,6 +600,7 @@ function createSettingsRoute() {
 function apply(ctx) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: AUTH_PATH, handler: createAuthRoute() }), 'workspace-audit: auth');
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SCAN_PATH, handler: createReadRoute(SCAN_PATH, () => runScan()) }), 'workspace-audit: scan');
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: HISTORY_PATH, handler: createReadRoute(HISTORY_PATH, () => loadHistory()) }), 'workspace-audit: history');
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SETTINGS_PATH, handler: createSettingsRoute() }), 'workspace-audit: settings');
 }
 
