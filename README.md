@@ -30,6 +30,7 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - [Scoring method](docs/SCORING.md)
 - [Release checklist](docs/RELEASE.md)
 - [Feedback guide](docs/FEEDBACK.md)
+- [Market observation](docs/MARKET.md)
 - [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 
