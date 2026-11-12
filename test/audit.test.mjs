@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { dependencyHealth, githubHealth, grade, parseGitHubRemote, renderReport, scanWorkspace } from '../index.js';
+import { dependencyHealth, githubHealth, grade, parseGitHubRemote, renderHandover, renderReport, scanWorkspace } from '../index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -70,6 +70,10 @@ test('renders a markdown report with risks and dependencies', async () => {  con
     assert.match(report, /Score:/);
     assert.match(report, /P0/);
     assert.match(report, /Dependencies:/);
+    assert.match(report, /Debugging:/);
+    const handover = renderHandover([result]);
+    assert.match(handover, /START HERE/);
+    assert.match(handover, /Run and test/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
