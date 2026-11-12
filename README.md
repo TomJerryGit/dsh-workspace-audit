@@ -13,10 +13,38 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - Security hotspots: self-hosted runner triggered by `pull_request`, suspected key filenames (names only), `shell=True`/`exec`/`pickle.load` patterns
 - Score v2: weighted by detected project type (app/library/plugin/data), with per-dimension deductions; P0 caps the total at 59.
 - Dependency audit is **offline by default**; `npm audit`/`pip-audit`/`pnpm audit`/`yarn audit`/`cargo audit` and GitHub API run only after explicitly enabling network checks.
+- Workspace-specific `.workspace-audit.json` supports ignore rules, accepted risks, expiry dates, and project-type overrides.
+- Baseline snapshots and background scan jobs with progress/cancel.
 - P0 findings cap the overall score at 59 so a high raw score cannot hide a blocking risk.
 - Git commands run with `core.fsmonitor=false` and `core.untrackedCache=false`; untracked secret filenames are included.
 - Failures, Git availability, scan duration, and offline state are shown in the panel.
 - Risks: P0/P1/P2 list, risk filters, project comparison table, score history sparkline, HTML export, and a Markdown handover report
+
+## Workspace configuration
+
+Create `.workspace-audit.json` in a project root:
+
+```json
+{
+  "projectType": "app",
+  "ignore": ["todo", "branch-protection"],
+  "accept": [
+    { "rule": "self-hosted-pr", "reason": "internal runner only", "until": "2026-12-31" }
+  ]
+}
+```
+
+- `ignore` hides a rule from active risks.
+- `accept` keeps the risk in the report but removes it from active risks and the P0 cap.
+- `until` is optional; after that date the acceptance expires.
+- `projectType` can be `app`, `library`, `plugin`, or `data`.
+
+## Baseline and scan jobs
+
+- **Set baseline** stores the current scores and active risk IDs.
+- Later scans show score delta, new risks, and resolved risks.
+- Scans start as background jobs; the panel shows completed/total progress and a cancel button.
+- Partial results are returned when a scan is cancelled.
 
 ## Tests
 
