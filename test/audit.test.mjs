@@ -46,8 +46,23 @@ test('scans a fixture workspace and identifies risks', async () => {
   }
 });
 
-test('renders a markdown report with risks and dependencies', async () => {
+test('workspace config ignores and accepts risks', async () => {
   const root = await fixtureCopy();
+  try {
+    await fs.writeFile(path.join(root, '.workspace-audit.json'), JSON.stringify({
+      ignore: ['dangerous-exec'],
+      accept: [{ rule: 'self-hosted-pr', reason: 'internal runner', until: '2030-01-01' }],
+    }));
+    const result = await scanWorkspace({ path: root, title: 'fixture' }, { noCache: true });
+    assert.ok(result.ignoredRisks.some((risk) => risk.id === 'dangerous-exec'));
+    assert.ok(result.acceptedRisks.some((risk) => risk.id === 'self-hosted-pr'));
+    assert.equal(result.risks.some((risk) => risk.id === 'self-hosted-pr'), false, 'accepted risk should not stay active');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('renders a markdown report with risks and dependencies', async () => {  const root = await fixtureCopy();
   try {
     const result = await scanWorkspace({ path: root, title: 'fixture' });
     const report = renderReport([result]);
