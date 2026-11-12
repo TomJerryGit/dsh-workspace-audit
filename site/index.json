@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "title": {
+    "en": "dsh-workspace-audit",
+    "zh": "工作区体检"
+  },
+  "plugins": [
+    {
+      "name": "@tomjerrygit/dsh-workspace-audit",
+      "title": {
+        "en": "Workspace Audit",
+        "zh": "工作区体检"
+      },
+      "description": {
+        "en": "Local-first workspace health audit: Git, tests, CI, size, security hotspots, and a Markdown handover report.",
+        "zh": "本地优先的工作区健康检查：Git、测试、CI、体积、安全热点与 Markdown 交接报告。"
+      },
+      "icon": "icons/icon.svg",
+      "author": "TomJerryGit",
+      "homepage": "https://github.com/TomJerryGit/dsh-workspace-audit#readme",
+      "repository": {
+        "url": "https://github.com/TomJerryGit/dsh-workspace-audit"
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1794445940,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0-rc.2"
+          }
+        }
+      ]
+    }
+  ]
+}
