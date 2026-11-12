@@ -29,6 +29,8 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - [API](docs/API.md)
 - [Scoring method](docs/SCORING.md)
 - [Release checklist](docs/RELEASE.md)
+- [Feedback guide](docs/FEEDBACK.md)
+- [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 
 ## Workspace configuration
