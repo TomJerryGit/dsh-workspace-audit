@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.0
+
+- JSON scan export for CI/integrations
+- “Report false positive” link prefilled to the GitHub issue template
+- HTTP Host integration test (auth → job start → status → report)
+- `market:check` script for npm/GitHub/Hub public metrics
+- Test count now 15 across unit, route, and integration suites
+
 ## v1.1.0
 
 - Detect ignored/nested secret filenames via bounded filesystem scan (still filename-only)
