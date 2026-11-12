@@ -956,6 +956,7 @@ async function runScan(scanOptions) {
   if (!mapped.cancelled) await saveHistory([...previousEntries, currentEntry]).catch(() => {});
   return {
     generatedAt: Date.now(),
+    version: await pluginVersion(),
     durationMs: Date.now() - startedAt,
     settings,
     cancelled: mapped.cancelled === true,
