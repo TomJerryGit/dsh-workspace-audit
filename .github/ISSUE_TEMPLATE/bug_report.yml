@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a crash, incorrect result, or install problem.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please remove secrets, private paths, and tokens from logs before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: dsh
+    attributes:
+      label: DSH / OS / Node versions
+      placeholder: "DSH 0.2.2-rc.1, Windows 10, Node 24"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the command, workspace type, and whether network checks were enabled.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs / screenshot
+      description: Do not paste API keys or full secret file contents.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, tokens, and private data from this report.
+          required: true
