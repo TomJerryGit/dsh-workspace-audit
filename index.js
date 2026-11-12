@@ -661,28 +661,28 @@ async function scanWorkspace(workspace, options) {
     github: (git.isRepo ? 30 : 0) + (git.remote ? 30 : 0) + (git.dirty === 0 ? 20 : 0) + (git.tags && git.tags.length > 0 ? 20 : 0),
   };
   const risks = [];
-  if (!git.isRepo) risks.push({ id: 'no-git', severity: 'P2', text: '目录未初始化 Git，无法追踪变更、回滚或协作。' });
-  if (git.isRepo && git.dirty > 0) risks.push({ id: 'dirty', severity: 'P1', text: `工作区有 ${git.dirty} 个未提交变更，发布前需确认。` });
-  if (git.isRepo && !git.remote) risks.push({ id: 'no-remote', severity: 'P2', text: '仓库没有 origin 远端，缺少异地备份/协作。' });
-  if (!markers.readme) risks.push({ id: 'readme', severity: 'P1', text: '缺少 README，后来开发者难以启动项目。' });
-  if (!markers.ci) risks.push({ id: 'ci', severity: 'P1', text: '缺少 CI，测试/构建容易回归。' });
-  if (workflows.some((wf) => wf.selfHosted && wf.pullRequest)) risks.push({ id: 'self-hosted-pr', severity: 'P0', text: '自托管 Runner 被 pull_request 触发，公开仓库存在不可信代码执行风险。' });
-  if (secretFiles.length > 0) risks.push({ id: 'secrets', severity: 'P1', text: `发现疑似密钥文件：${secretFiles.slice(0, 5).join(', ')}（只检查了文件名，未读取内容）。` });
-  if (dangerous > 10) risks.push({ id: 'dangerous-exec', severity: 'P1', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 高危模式，需确认输入来源。` });
-  else if (dangerous > 0) risks.push({ id: 'dangerous-exec', severity: 'P2', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 模式，建议人工确认。` });
+  if (!git.isRepo) risks.push({ id: 'no-git', severity: 'P2', text: '目录未初始化 Git，无法追踪变更、回滚或协作。', en: 'Directory is not a Git repository; changes cannot be tracked or rolled back.' });
+  if (git.isRepo && git.dirty > 0) risks.push({ id: 'dirty', severity: 'P1', text: `工作区有 ${git.dirty} 个未提交变更，发布前需确认。`, en: `${git.dirty} uncommitted changes; confirm before release.` });
+  if (git.isRepo && !git.remote) risks.push({ id: 'no-remote', severity: 'P2', text: '仓库没有 origin 远端，缺少异地备份/协作。', en: 'No origin remote; no off-machine backup or collaboration.' });
+  if (!markers.readme) risks.push({ id: 'readme', severity: 'P1', text: '缺少 README，后来开发者难以启动项目。', en: 'Missing README; new developers cannot easily start the project.' });
+  if (!markers.ci) risks.push({ id: 'ci', severity: 'P1', text: '缺少 CI，测试/构建容易回归。', en: 'Missing CI; tests and builds can regress.' });
+  if (workflows.some((wf) => wf.selfHosted && wf.pullRequest)) risks.push({ id: 'self-hosted-pr', severity: 'P0', text: '自托管 Runner 被 pull_request 触发，公开仓库存在不可信代码执行风险。', en: 'A self-hosted runner is triggered by pull_request; untrusted code execution risk on a public repo.' });
+  if (secretFiles.length > 0) risks.push({ id: 'secrets', severity: 'P1', text: `发现疑似密钥文件：${secretFiles.slice(0, 5).join(', ')}（只检查了文件名，未读取内容）。`, en: `Suspected secret files: ${secretFiles.slice(0, 5).join(', ')} (filename only; contents not read).` });
+  if (dangerous > 10) risks.push({ id: 'dangerous-exec', severity: 'P1', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 高危模式，需确认输入来源。`, en: `${dangerous} high-risk shell=True/exec/pickle.load patterns; verify input sources.` });
+  else if (dangerous > 0) risks.push({ id: 'dangerous-exec', severity: 'P2', text: `发现 ${dangerous} 处 shell=True/exec/pickle.load 模式，建议人工确认。`, en: `${dangerous} shell=True/exec/pickle.load patterns; review manually.` });
   const significantArtifacts = artifacts.filter((item) => item.bytes >= 1024 * 1024);
   if (significantArtifacts.length > 0) {
     const huge = significantArtifacts.some((item) => item.bytes >= 1024 * 1024 * 1024);
-    risks.push({ id: 'artifacts', severity: huge ? 'P1' : 'P2', text: `发现构建/缓存目录：${significantArtifacts.map((item) => item.name + ' ' + Math.round(item.bytes / 1024 / 1024) + 'MB').join(', ')}。` });
+    risks.push({ id: 'artifacts', severity: huge ? 'P1' : 'P2', text: `发现构建/缓存目录：${significantArtifacts.map((item) => item.name + ' ' + Math.round(item.bytes / 1024 / 1024) + 'MB').join(', ')}。`, en: `Build/cache directories: ${significantArtifacts.map((item) => item.name + ' ' + Math.round(item.bytes / 1024 / 1024) + 'MB').join(', ')}.` });
   }
-  if (dependencies.vulnerabilities.total > 0) risks.push({ id: 'vulns', severity: dependencies.vulnerabilities.total >= 5 ? 'P0' : 'P1', text: `${dependencies.vulnerabilities.tool || '依赖扫描'} 发现 ${dependencies.vulnerabilities.total} 个依赖漏洞。` });
-  if (dependencies.lockfiles.length === 0 && dependencies.manifests.length > 0) risks.push({ id: 'lockfile', severity: 'P2', text: '依赖清单存在但没有检测到锁文件。' });
-  if (dependencies.unpinned > 5) risks.push({ id: 'unpinned', severity: 'P2', text: `requirements 中有 ${dependencies.unpinned} 条非精确版本约束。` });
-  if (github && github.latestRelease && git.tags && git.tags.length > 0 && github.latestRelease !== git.tags[0]) risks.push({ id: 'release-mismatch', severity: 'P2', text: `Git tag ${git.tags[0]} 与 GitHub latest release ${github.latestRelease} 不一致。` });
-  if (github && github.archived === true) risks.push({ id: 'archived', severity: 'P2', text: 'GitHub 仓库已归档（archived）。' });
-  if (github && github.branchProtected === 'unprotected') risks.push({ id: 'branch-protection', severity: 'P2', text: 'GitHub 默认分支未检测到保护规则。' });
-  if (github && github.status === 'rate_limited') risks.push({ id: 'rate-limit', severity: 'P2', text: 'GitHub API 触发限流，部分健康数据不可用。' });
-  if (todo > 20) risks.push({ id: 'todo', severity: 'P2', text: `源码中约 ${todo} 处 TODO/FIXME，建议建立清理计划。` });
+  if (dependencies.vulnerabilities.total > 0) risks.push({ id: 'vulns', severity: dependencies.vulnerabilities.total >= 5 ? 'P0' : 'P1', text: `${dependencies.vulnerabilities.tool || '依赖扫描'} 发现 ${dependencies.vulnerabilities.total} 个依赖漏洞。`, en: `${dependencies.vulnerabilities.tool || 'Dependency audit'} found ${dependencies.vulnerabilities.total} dependency vulnerabilities.` });
+  if (dependencies.lockfiles.length === 0 && dependencies.manifests.length > 0) risks.push({ id: 'lockfile', severity: 'P2', text: '依赖清单存在但没有检测到锁文件。', en: 'Dependency manifest exists but no lockfile was detected.' });
+  if (dependencies.unpinned > 5) risks.push({ id: 'unpinned', severity: 'P2', text: `requirements 中有 ${dependencies.unpinned} 条非精确版本约束。`, en: `${dependencies.unpinned} non-exact version constraints in requirements.` });
+  if (github && github.latestRelease && git.tags && git.tags.length > 0 && github.latestRelease !== git.tags[0]) risks.push({ id: 'release-mismatch', severity: 'P2', text: `Git tag ${git.tags[0]} 与 GitHub latest release ${github.latestRelease} 不一致。`, en: `Git tag ${git.tags[0]} differs from GitHub latest release ${github.latestRelease}.` });
+  if (github && github.archived === true) risks.push({ id: 'archived', severity: 'P2', text: 'GitHub 仓库已归档（archived）。', en: 'GitHub repository is archived.' });
+  if (github && github.branchProtected === 'unprotected') risks.push({ id: 'branch-protection', severity: 'P2', text: 'GitHub 默认分支未检测到保护规则。', en: 'No branch protection detected on the default branch.' });
+  if (github && github.status === 'rate_limited') risks.push({ id: 'rate-limit', severity: 'P2', text: 'GitHub API 触发限流，部分健康数据不可用。', en: 'GitHub API rate limit reached; some health data is unavailable.' });
+  if (todo > 20) risks.push({ id: 'todo', severity: 'P2', text: `源码中约 ${todo} 处 TODO/FIXME，建议建立清理计划。`, en: `About ${todo} TODO/FIXME markers; consider a cleanup plan.` });
   const config = workspaceConfig;
   const suppression = applySuppressions(risks, config);
   const activeRisks = suppression.active;
@@ -724,27 +724,64 @@ function grade(score) {
   return 'D';
 }
 
-function renderReport(workspaces) {
-  const lines = ['# Workspace Audit Report', '', `Generated: ${new Date().toISOString()}`, ''];
+const DIMENSION_EN = { documentation: 'Documentation', development: 'Development', debugging: 'Debugging', performance: 'Performance', functionality: 'Functionality', security: 'Security', github: 'GitHub' };
+
+function renderReport(workspaces, locale) {
+  const zh = locale === 'zh';
+  const lines = [zh ? '# 工作区体检报告' : '# Workspace Audit Report', '', (zh ? '生成时间：' : 'Generated: ') + new Date().toISOString(), ''];
   for (const workspace of workspaces) {
-    lines.push(`## ${workspace.title}`, '', `- Path: \`${workspace.path}\``, `- Project type: ${workspace.projectType || 'app'}`, `- Score: **${workspace.score}/100 (${grade(workspace.score)})**${workspace.rawScore !== workspace.score ? ' (raw ' + workspace.rawScore + ', capped by P0)' : ''}`, `- Git: ${workspace.git.isRepo ? workspace.git.branch + ' · ' + (workspace.git.remote || 'no remote') : 'not a repository'}`, `- Size: ${Math.round(workspace.size.bytes / 1024 / 1024)}MB`, `- Test files: ${workspace.testFiles}`, `- TODO/FIXME: ${workspace.todo}`, '');
+    lines.push(
+      `## ${workspace.title}`,
+      '',
+      (zh ? '- 路径：' : '- Path: ') + '`' + workspace.path + '`',
+      (zh ? '- 项目类型：' : '- Project type: ') + (workspace.projectType || 'app'),
+      (zh ? '- 评分：' : '- Score: ') + `**${workspace.score}/100 (${grade(workspace.score)})**${workspace.rawScore !== workspace.score ? ' (' + (zh ? 'P0 封顶，原始 ' : 'raw ') + workspace.rawScore + ')' : ''}`,
+      (zh ? '- Git：' : '- Git: ') + (workspace.git.isRepo ? workspace.git.branch + ' · ' + (workspace.git.remote || 'no remote') : 'not a repository'),
+      (zh ? '- 体积：' : '- Size: ') + Math.round(workspace.size.bytes / 1024 / 1024) + 'MB',
+      (zh ? '- 测试文件：' : '- Test files: ') + workspace.testFiles,
+      (zh ? '- TODO/FIXME：' : '- TODO/FIXME: ') + workspace.todo,
+      '',
+    );
     if (Array.isArray(workspace.deductions) && workspace.deductions.length > 0) {
-      lines.push('### Score deductions', '');
+      lines.push(zh ? '### 扣分明细' : '### Score deductions', '');
       for (const deduction of workspace.deductions.slice(0, 5)) lines.push(`- ${deduction.dimension}: ${deduction.points} points${deduction.reason ? ' · ' + deduction.reason : ''}`);
       lines.push('');
     }
-    lines.push('### Dimensions', '');
-    for (const [key, value] of Object.entries(workspace.dimensions)) lines.push(`- ${key}: ${value}/100`);
-    if (Array.isArray(workspace.commands) && workspace.commands.length > 0) lines.push(`- Commands: ${workspace.commands.map((command) => '`' + command + '`').join(' · ')}`);
-    if (workspace.trend && workspace.trend.previousScore !== null) lines.push(`- Trend: ${workspace.trend.delta >= 0 ? '+' : ''}${workspace.trend.delta} from ${workspace.trend.previousScore}`);
+    lines.push(zh ? '### 维度' : '### Dimensions', '');
+    for (const [key, value] of Object.entries(workspace.dimensions)) lines.push(`- ${zh ? key : (DIMENSION_EN[key] || key)}: ${value}/100`);
+    if (Array.isArray(workspace.commands) && workspace.commands.length > 0) lines.push((zh ? '- 命令：' : '- Commands: ') + workspace.commands.map((command) => '`' + command + '`').join(' · '));
+    if (workspace.trend && workspace.trend.previousScore !== null) lines.push((zh ? '- 趋势：' : '- Trend: ') + (workspace.trend.delta >= 0 ? '+' : '') + workspace.trend.delta + ' from ' + workspace.trend.previousScore);
+    if (workspace.baseline && workspace.baseline.score !== null) lines.push((zh ? '- 相对基线：' : '- vs baseline: ') + (workspace.baseline.delta >= 0 ? '+' : '') + workspace.baseline.delta + (workspace.baseline.newRiskIds.length > 0 ? ' · new: ' + workspace.baseline.newRiskIds.join(', ') : ''));
     if (workspace.dependencies && (workspace.dependencies.manifests.length > 0 || workspace.dependencies.lockfiles.length > 0)) {
-      lines.push(`- Dependencies: manifests=${workspace.dependencies.manifests.join(',') || 'none'}; lockfiles=${workspace.dependencies.lockfiles.join(',') || 'none'}; vulnerabilities=${workspace.dependencies.vulnerabilities.total} (${workspace.dependencies.vulnerabilities.status})`);
+      lines.push(`- ${zh ? '依赖' : 'Dependencies'}: manifests=${workspace.dependencies.manifests.join(',') || 'none'}; lockfiles=${workspace.dependencies.lockfiles.join(',') || 'none'}; vulnerabilities=${workspace.dependencies.vulnerabilities.total} (${workspace.dependencies.vulnerabilities.status})`);
     }
-    if (workspace.github) lines.push(`- GitHub: ${workspace.github.owner}/${workspace.github.repo}; release=${workspace.github.latestRelease || 'none'}; issues=${workspace.github.openIssues ?? '—'}; branchProtected=${workspace.github.branchProtected ?? '—'}`);
-    lines.push('', '### Risks', '');
-    if (workspace.risks.length === 0) lines.push('- No blocking risks found.');
-    for (const risk of workspace.risks) lines.push(`- **${risk.severity}** ${risk.text}`);
+    if (workspace.github) lines.push(`- GitHub: ${workspace.github.owner}/${workspace.github.repo}; release=${workspace.github.latestRelease || 'none'}; issues=${workspace.github.openIssues ?? '—'}; PRs=${workspace.github.openPRs ?? '—'}; branchProtected=${workspace.github.branchProtected ?? '—'}`);
+    lines.push('', zh ? '### 风险' : '### Risks', '');
+    if (workspace.risks.length === 0) lines.push(zh ? '- 未发现阻塞风险。' : '- No blocking risks found.');
+    for (const risk of workspace.risks || []) lines.push(`- **${risk.severity}** ${zh ? risk.text : (risk.en || risk.text)}`);
+    for (const risk of workspace.acceptedRisks || []) lines.push(`- **${risk.severity}** (${zh ? '已接受' : 'accepted'}) ${zh ? risk.text : (risk.en || risk.text)}`);
+    for (const risk of workspace.ignoredRisks || []) lines.push(`- **${risk.severity}** (${zh ? '已忽略' : 'ignored'}) ${zh ? risk.text : (risk.en || risk.text)}`);
     lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function renderHandover(workspaces, locale) {
+  const zh = locale === 'zh';
+  const lines = [zh ? '# START HERE · 工作区交接说明' : '# START HERE · Workspace Handover', '', (zh ? '由 dsh-workspace-audit 生成：' : 'Generated by dsh-workspace-audit: ') + new Date().toISOString(), ''];
+  for (const workspace of workspaces) {
+    lines.push(`## ${workspace.title}`, '', (zh ? '- 路径：' : '- Path: ') + '`' + workspace.path + '`', (zh ? '- 类型：' : '- Type: ') + (workspace.projectType || 'app'), (zh ? '- 健康分：' : '- Health score: ') + workspace.score + '/100', '');
+    lines.push(zh ? '### 启动与测试' : '### Run and test', '', ...(workspace.commands || []).map((command) => '- `' + command + '`'), '');
+    lines.push(zh ? '### 先读什么' : '### Read first', '');
+    if (workspace.markers.readme) lines.push(zh ? '- README（项目入口）' : '- README (project entry)');
+    if (workspace.markers.docs) lines.push(zh ? '- docs/（架构与运维文档）' : '- docs/ (architecture and operations)');
+    if (workspace.markers.ci) lines.push(zh ? '- .github/workflows（CI 流程）' : '- .github/workflows (CI)');
+    lines.push('');
+    lines.push(zh ? '### 当前风险' : '### Current risks', '');
+    if ((workspace.risks || []).length === 0) lines.push(zh ? '- 未发现阻塞风险。' : '- No blocking risks.');
+    for (const risk of workspace.risks || []) lines.push(`- **${risk.severity}** ${zh ? risk.text : (risk.en || risk.text)}`);
+    for (const risk of workspace.acceptedRisks || []) lines.push(`- **${risk.severity}** (${zh ? '已接受' : 'accepted'}) ${zh ? risk.text : (risk.en || risk.text)}`);
+    lines.push('', zh ? '### 注意' : '### Notes', '', zh ? '- 该文档来自静态规则与仓库状态，不是完整架构文档或专业安全审计。' : '- This document comes from static rules and repository state; it is not a complete architecture document or a professional security audit.', '');
   }
   return lines.join('\n');
 }
@@ -827,7 +864,10 @@ async function runScan(scanOptions) {
     failures,
     discovered: discovered.length,
     baseline: { createdAt: baseline.createdAt || null },
-    report: renderReport(workspaces),
+    report: renderReport(workspaces, 'zh'),
+    reportEn: renderReport(workspaces, 'en'),
+    handover: renderHandover(workspaces, 'zh'),
+    handoverEn: renderHandover(workspaces, 'en'),
   };
 }
 
@@ -978,5 +1018,5 @@ function apply(ctx) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: SETTINGS_PATH, handler: createSettingsRoute() }), 'workspace-audit: settings');
 }
 
-export { apply, scanWorkspace, discoverWorkspaces, dependencyHealth, githubHealth, parseGitHubRemote, renderReport, grade };
+export { apply, scanWorkspace, discoverWorkspaces, dependencyHealth, githubHealth, parseGitHubRemote, renderReport, renderHandover, grade };
 export const inject = ['webServer'];
