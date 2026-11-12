@@ -117,6 +117,9 @@ const payload = {
       dependencies: { manifests: ['package.json'], lockfiles: [], unpinned: 2, vulnerabilities: { status: 'offline', total: 0, tool: '' } },
       github: { owner: 'demo', repo: 'app', latestRelease: 'v0.9.0', openIssues: 3, openPRs: 1, branchProtected: 'unprotected' },
       risks: [{ severity: 'P0', text: 'demo P0 risk' }, { severity: 'P1', text: 'demo P1 risk' }],
+      ignoredRisks: [{ id: 'todo', severity: 'P2', text: 'ignored todo' }],
+      acceptedRisks: [{ id: 'branch-protection', severity: 'P2', text: 'accepted branch', reason: 'internal', until: '2026-12-31' }],
+      baseline: { score: 70, delta: -11, newRiskIds: ['self-hosted-pr'], resolvedRiskIds: [] },
       trend: { previousScore: 70, delta: -11 },
     },
     {
@@ -139,9 +142,11 @@ const fixtureHtml = `<!doctype html>
 </head><body><div id="root"></div>
 <script>
 window.__ModuleLoader__ = { entries: [], load(entry) { this.entries.push(entry); } };
-window.fetch = async (url) => {
+window.fetch = async (url, options) => {
   if (String(url).includes('/auth')) return { ok: true, json: async () => ({ token: 'smoke-token' }) };
-  if (String(url).includes('/scan')) return { ok: true, json: async () => (${JSON.stringify(payload)}) };
+  if (String(url).includes('/scan/start')) return { ok: true, json: async () => ({ jobId: 'smoke-job', total: 2 }) };
+  if (String(url).includes('/scan/status')) return { ok: true, json: async () => ({ jobId: 'smoke-job', state: 'done', progress: { completed: 2, total: 2 }, result: (${JSON.stringify(payload)}) }) };
+  if (String(url).includes('/baseline')) return { ok: true, json: async () => ({ ok: true }) };
   if (String(url).includes('/history')) return { ok: true, json: async () => ([{ at: Date.now(), workspaces: [{ path: 'D:\\\\DemoApp', score: 70 }] }]) };
   return { ok: false, status: 404, json: async () => ({}) };
 };
