@@ -8,9 +8,10 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - Project: README, LICENSE, .gitignore, manifests, lockfiles, tests, docs, CI
 - Dependencies: manifests/lockfiles, unpinned requirements, `npm audit`/`pip-audit` when available
 - GitHub: latest release vs local tag, open issues, archived state, branch protection (public repos)
+- Onboarding: inferred install/test/run commands (`npm test`, `pytest`, `cargo test`, etc.)
 - Size: source/scan size and known build/cache directories
 - Security hotspots: self-hosted runner triggered by `pull_request`, suspected key filenames (names only), `shell=True`/`exec`/`pickle.load` patterns
-- Risks: P0/P1/P2 list, risk filters, project comparison table, score trend history, and a Markdown handover report
+- Risks: P0/P1/P2 list, risk filters, project comparison table, score history sparkline, HTML export, and a Markdown handover report
 
 ## Tests
 
