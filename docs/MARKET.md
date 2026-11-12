@@ -22,18 +22,19 @@ No telemetry is collected. All metrics come from public registries/GitHub or use
 
 ## Weekly checklist
 
-1. `npm view @tomjerrygit/dsh-workspace-audit version dist-tags`
-2. Check npm downloads:
+1. `node scripts/market-check.mjs`
+2. `npm view @tomjerrygit/dsh-workspace-audit version dist-tags`
+3. Check npm downloads:
    `https://api.npmjs.org/downloads/point/last-week/@tomjerrygit%2Fdsh-workspace-audit`
-3. Check GitHub:
+4. Check GitHub:
    - stars / forks
    - new issues
    - open PRs
    - release downloads (if assets)
-4. Check plugin hub issue #751 state and comments.
-5. Reproduce any reported install failure in a clean profile.
-6. Verify market index still returns 1.0.0.
-7. Run `node --test test/audit.test.mjs` and `node test/browser-smoke.mjs` before cutting a patch.
+5. Check plugin hub issue #751 state and comments.
+6. Reproduce any reported install failure in a clean profile.
+7. Verify market index still returns 1.2.0.
+8. Run `node --test test/audit.test.mjs test/routes.test.mjs test/integration.test.mjs` and `node test/browser-smoke.mjs` before cutting a patch.
 
 ## What to watch
 
