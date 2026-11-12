@@ -43,6 +43,8 @@ window.__ModuleLoader__.load({
       release: 'Release',
       branch: '分支保护',
       noLock: '无锁文件',
+      html: '导出 HTML',
+      commandsTitle: '启动/测试命令',
     };
     const en = {
       panel: 'Workspace Audit',
@@ -82,6 +84,8 @@ window.__ModuleLoader__.load({
       release: 'Release',
       branch: 'Branch protection',
       noLock: 'No lockfile',
+      html: 'Export HTML',
+      commandsTitle: 'Run/test commands',
     };
     const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
     const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '14px', padding: '14px', background: 'var(--dsw-alias-bg-layer-1)' };
@@ -93,6 +97,14 @@ window.__ModuleLoader__.load({
     };
     const grade = (score) => (score >= 85 ? 'A' : score >= 70 ? 'B' : score >= 55 ? 'C' : 'D');
     const color = (score) => (score >= 85 ? 'var(--dsw-alias-state-success-primary)' : score >= 70 ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-state-error-primary)');
+    const sparkline = (values) => {
+      if (!Array.isArray(values) || values.length < 2) return null;
+      const width = 90;
+      const height = 22;
+      const points = values.map((value, index) => (index / (values.length - 1)) * width + ',' + (height - Math.max(0, Math.min(100, value)) / 100 * height).toFixed(1)).join(' ');
+      return h('svg', { width, height, viewBox: '0 0 ' + width + ' ' + height, style: { verticalAlign: 'middle', marginLeft: '4px' }, 'aria-hidden': true },
+        h('polyline', { points, fill: 'none', stroke: 'var(--dshqn-accent, var(--dsw-alias-brand-primary))', strokeWidth: '1.5' }));
+    };
 
     function Panel() {
       const t = (key) => { const dict = /^zh/i.test(String(window.navigator && window.navigator.language)) ? zh : en; return dict[key] || key; };
@@ -101,13 +113,16 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState('loading');
       const [rootDraft, setRootDraft] = React.useState('');
       const [riskFilter, setRiskFilter] = React.useState('all');
+      const [history, setHistory] = React.useState([]);
       const [copied, setCopied] = React.useState(false);
       const auth = () => token.length > 0 ? Promise.resolve(token) : fetch('/api/workspace-audit/auth').then((res) => res.json()).then((payload) => { setToken(payload.token); return payload.token; });
       const headers = (value) => ({ 'x-workspace-audit-token': value, accept: 'application/json' });
       const load = () => {
-        auth().then((value) => fetch('/api/workspace-audit/scan', { headers: headers(value), cache: 'no-store' }))
-          .then((res) => { if (!res.ok) throw new Error(String(res.status)); return res.json(); })
-          .then((payload) => { setScan(payload); setState('ready'); })
+        auth().then((value) => Promise.all([
+          fetch('/api/workspace-audit/scan', { headers: headers(value), cache: 'no-store' }).then((res) => { if (!res.ok) throw new Error(String(res.status)); return res.json(); }),
+          fetch('/api/workspace-audit/history', { headers: headers(value), cache: 'no-store' }).then((res) => res.ok ? res.json() : []).catch(() => []),
+        ]))
+          .then(([payload, entries]) => { setScan(payload); setHistory(Array.isArray(entries) ? entries : []); setState('ready'); })
           .catch(() => setState('failed'));
       };
       const addRoot = () => {
@@ -125,6 +140,18 @@ window.__ModuleLoader__.load({
         link.click();
         URL.revokeObjectURL(link.href);
       };
+      const downloadHtml = () => {
+        if (!scan) return;
+        const escape = (value) => String(value ?? '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+        const rows = (scan.workspaces || []).map((workspace) => '<tr><td>' + escape(workspace.title) + '</td><td><b>' + workspace.score + '</b></td><td>' + escape(Object.entries(workspace.dimensions).map(([key, value]) => key + ' ' + value).join(' · ')) + '</td><td>' + escape((workspace.risks || []).map((risk) => '[' + risk.severity + '] ' + risk.text).join('<br/>')) + '</td></tr>').join('');
+        const html = '<!doctype html><meta charset="utf-8"><title>Workspace Audit</title><style>body{font-family:system-ui,sans-serif;margin:32px;color:#222}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px;vertical-align:top;font-size:13px}th{text-align:left}</style><h1>Workspace Audit</h1><p>Generated ' + new Date(scan.generatedAt).toLocaleString() + '</p><table><thead><tr><th>Workspace</th><th>Score</th><th>Dimensions</th><th>Risks</th></tr></thead><tbody>' + rows + '</tbody></table><pre style="white-space:pre-wrap;margin-top:24px">' + escape(scan.report) + '</pre>';
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'workspace-audit.html';
+        link.click();
+        URL.revokeObjectURL(link.href);
+      };
       React.useEffect(() => { load(); }, []);
       if (state === 'loading') return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('scanning')));
       if (state === 'failed' || scan === null) return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('failed')), h('button', { type: 'button', onClick: load }, t('scan')));
@@ -132,6 +159,10 @@ window.__ModuleLoader__.load({
       const filteredWorkspaces = workspaces.filter((workspace) => riskFilter === 'all' || (workspace.risks || []).some((risk) => risk.severity === riskFilter));
       const avg = workspaces.length > 0 ? Math.round(workspaces.reduce((sum, workspace) => sum + workspace.score, 0) / workspaces.length) : 0;
       const p0 = workspaces.reduce((sum, workspace) => sum + workspace.risks.filter((risk) => risk.severity === 'P0').length, 0);
+      const historyFor = (workspacePath) => history
+        .map((entry) => Array.isArray(entry.workspaces) ? entry.workspaces.find((row) => row.path === workspacePath) : null)
+        .filter(Boolean)
+        .map((row) => row.score);
       return h('div', { style: page },
         h('header', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
           h('div', { style: { flex: '1 1 auto' } }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { margin: '4px 0 0', color: 'var(--dsw-alias-label-secondary)', fontSize: '13px' } }, t('subtitle'))),
@@ -148,6 +179,7 @@ window.__ModuleLoader__.load({
           ['all', 'P0', 'P1', 'P2'].map((severity) => h('button', { key: severity, type: 'button', onClick: () => setRiskFilter(severity), style: { fontWeight: riskFilter === severity ? 700 : 400 } }, severity === 'all' ? t('filterAll') : severity)),
           h('button', { type: 'button', onClick: copy }, copied ? t('copied') : t('copy')),
           h('button', { type: 'button', onClick: download }, t('download')),
+          h('button', { type: 'button', onClick: downloadHtml }, t('html')),
         ),
         workspaces.length === 0 ? h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('empty')) : null,
         workspaces.length > 0 ? h('section', { style: card },
@@ -170,6 +202,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', gap: '10px', alignItems: 'baseline', flexWrap: 'wrap' } },
               h('h2', { style: { margin: 0, fontSize: '16px', flex: '1 1 auto' } }, workspace.title),
               workspace.trend && workspace.trend.delta !== null ? h('span', { style: { fontSize: '12px', color: workspace.trend.delta >= 0 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)' } }, (workspace.trend.delta >= 0 ? '+' : '') + workspace.trend.delta) : null,
+              sparkline(historyFor(workspace.path)),
               h('strong', { style: { fontSize: '20px', color: color(workspace.score) } }, workspace.score + ' ' + grade(workspace.score)),
             ),
             h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', margin: '4px 0 8px' } }, t('path') + '：' + workspace.path),
@@ -187,6 +220,9 @@ window.__ModuleLoader__.load({
                 ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
                 : null,
             ),
+            Array.isArray(workspace.commands) && workspace.commands.length > 0
+              ? h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } }, t('commandsTitle') + '：' + workspace.commands.join(' · '))
+              : null,
             h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '8px' } },
               Object.entries(workspace.dimensions || {}).map(([key, value]) => h('span', { key, style: { fontSize: '10px', padding: '1px 6px', borderRadius: '999px', background: 'var(--dsw-alias-bg-layer-2)' } }, key + ' ' + value)),
             ),
