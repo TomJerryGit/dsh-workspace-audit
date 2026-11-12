@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { dependencyHealth, grade, parseGitHubRemote, renderReport, scanWorkspace } from '../index.js';
+import { dependencyHealth, githubHealth, grade, parseGitHubRemote, renderReport, scanWorkspace } from '../index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,12 +28,16 @@ test('scans a fixture workspace and identifies risks', async () => {
     assert.equal(result.markers.license, true);
     assert.equal(result.markers.ci, true);
     assert.equal(result.testFiles, 1);
+    await fs.writeFile(path.join(root, '.env.local'), 'DEMO=untracked\n');
+    const withUntracked = await scanWorkspace({ path: root, title: 'fixture' });
+    assert.ok(withUntracked.secretFiles.includes('.env.local'));
     assert.ok(result.secretFiles.includes('.env'));
     assert.ok(result.workflows.some((workflow) => workflow.pullRequest && workflow.selfHosted));
     assert.ok(result.risks.some((risk) => risk.severity === 'P0'));
     assert.ok(result.todo >= 1);
     assert.ok(Array.isArray(result.commands) && result.commands.includes('npm install'));
-    assert.ok(result.score >= 0 && result.score <= 100);
+    assert.ok(result.score <= 59, 'P0 must cap the score at 59');
+    assert.ok(result.rawScore >= result.score);
     assert.equal(result.github, null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -64,13 +68,14 @@ test('parses GitHub remotes and grades', () => {
   assert.equal(grade(10), 'D');
 });
 
-test('dependency health reports manifests and lockfiles', async () => {
+test('dependency health is offline by default', async () => {
   const root = await fixtureCopy();
   try {
     const result = await dependencyHealth(root);
     assert.ok(result.manifests.includes('package.json'));
     assert.deepEqual(result.lockfiles, []);
-    assert.ok(['skipped', 'checked', 'error'].includes(result.vulnerabilities.status));
+    assert.equal(result.vulnerabilities.status, 'offline');
+    assert.equal(await githubHealth({ remote: 'https://github.com/owner/repo' }, { online: false }), null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
