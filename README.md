@@ -22,6 +22,15 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - Failures, Git availability, scan duration, and offline state are shown in the panel.
 - Risks: P0/P1/P2 list, risk filters, project comparison table, score history sparkline, HTML export, and a Markdown handover report
 
+## Documentation
+
+- [Privacy & data flow](docs/PRIVACY.md)
+- [Compatibility matrix](docs/COMPATIBILITY.md)
+- [API](docs/API.md)
+- [Scoring method](docs/SCORING.md)
+- [Release checklist](docs/RELEASE.md)
+- [Changelog](CHANGELOG.md)
+
 ## Workspace configuration
 
 Create `.workspace-audit.json` in a project root:
