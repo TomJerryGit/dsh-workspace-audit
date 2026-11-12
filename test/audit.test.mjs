@@ -102,6 +102,20 @@ test('dependency health is offline by default', async () => {
   }
 });
 
+test('scans gracefully when Git is unavailable', async () => {
+  const root = await fixtureCopy();
+  const originalPath = process.env.PATH;
+  try {
+    process.env.PATH = '';
+    const result = await scanWorkspace({ path: root, title: 'fixture' }, { noCache: true });
+    assert.equal(result.git.isRepo, false);
+    assert.ok(result.risks.some((risk) => risk.id === 'no-git'));
+  } finally {
+    process.env.PATH = originalPath;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('github health separates issues/PRs and classifies protection', async () => {
   const originalFetch = globalThis.fetch;
   const response = (status, body, headers = {}) => ({ ok: status >= 200 && status < 300, status, headers: { get: (name) => headers[name.toLowerCase()] ?? null }, json: async () => body });
