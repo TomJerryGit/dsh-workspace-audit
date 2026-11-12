@@ -11,7 +11,8 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - Onboarding: inferred install/test/run commands (`npm test`, `pytest`, `cargo test`, etc.)
 - Size: source/scan size and known build/cache directories
 - Security hotspots: self-hosted runner triggered by `pull_request`, suspected key filenames (names only), `shell=True`/`exec`/`pickle.load` patterns
-- Dependency audit is **offline by default**; `npm audit`/`pip-audit` and GitHub API run only after explicitly enabling network checks.
+- Score v2: weighted by detected project type (app/library/plugin/data), with per-dimension deductions; P0 caps the total at 59.
+- Dependency audit is **offline by default**; `npm audit`/`pip-audit`/`pnpm audit`/`yarn audit`/`cargo audit` and GitHub API run only after explicitly enabling network checks.
 - P0 findings cap the overall score at 59 so a high raw score cannot hide a blocking risk.
 - Git commands run with `core.fsmonitor=false` and `core.untrackedCache=false`; untracked secret filenames are included.
 - Failures, Git availability, scan duration, and offline state are shown in the panel.
@@ -21,9 +22,10 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 
 ```sh
 node --test test/audit.test.mjs
+node test/browser-smoke.mjs
 ```
 
-The test suite uses a self-contained fixture workspace (`test/fixtures/basic`) and checks Git scanning, secret filename detection, workflow risk detection, dependency health, report rendering, GitHub remote parsing, and grading.
+The unit suite uses a self-contained fixture workspace (`test/fixtures/basic`) and checks scanning, secrets, workflow risk, dependency health, report rendering, GitHub classification, and grading. The browser smoke boots the real `client.js` with local React UMD files, then checks rendering, risk filters, failures and export controls without network access.
 
 ## Install
 
