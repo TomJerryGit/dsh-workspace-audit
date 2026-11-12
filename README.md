@@ -11,6 +11,10 @@ Local-first workspace health audit for DeepSeek Harness. Read-only by design; no
 - Onboarding: inferred install/test/run commands (`npm test`, `pytest`, `cargo test`, etc.)
 - Size: source/scan size and known build/cache directories
 - Security hotspots: self-hosted runner triggered by `pull_request`, suspected key filenames (names only), `shell=True`/`exec`/`pickle.load` patterns
+- Dependency audit is **offline by default**; `npm audit`/`pip-audit` and GitHub API run only after explicitly enabling network checks.
+- P0 findings cap the overall score at 59 so a high raw score cannot hide a blocking risk.
+- Git commands run with `core.fsmonitor=false` and `core.untrackedCache=false`; untracked secret filenames are included.
+- Failures, Git availability, scan duration, and offline state are shown in the panel.
 - Risks: P0/P1/P2 list, risk filters, project comparison table, score history sparkline, HTML export, and a Markdown handover report
 
 ## Tests
