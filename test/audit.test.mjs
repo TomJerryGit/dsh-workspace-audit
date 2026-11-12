@@ -29,13 +29,15 @@ test('scans a fixture workspace and identifies risks', async () => {
     assert.equal(result.markers.ci, true);
     assert.equal(result.testFiles, 1);
     await fs.writeFile(path.join(root, '.env.local'), 'DEMO=untracked\n');
-    const withUntracked = await scanWorkspace({ path: root, title: 'fixture' });
+    const withUntracked = await scanWorkspace({ path: root, title: 'fixture' }, { noCache: true });
     assert.ok(withUntracked.secretFiles.includes('.env.local'));
     assert.ok(result.secretFiles.includes('.env'));
     assert.ok(result.workflows.some((workflow) => workflow.pullRequest && workflow.selfHosted));
     assert.ok(result.risks.some((risk) => risk.severity === 'P0'));
     assert.ok(result.todo >= 1);
-    assert.ok(Array.isArray(result.commands) && result.commands.includes('npm install'));
+    assert.ok(result.commands.includes('npm install'));
+    assert.equal(result.projectType, 'app');
+    assert.ok(Array.isArray(result.deductions));
     assert.ok(result.score <= 59, 'P0 must cap the score at 59');
     assert.ok(result.rawScore >= result.score);
     assert.equal(result.github, null);
@@ -78,5 +80,40 @@ test('dependency health is offline by default', async () => {
     assert.equal(await githubHealth({ remote: 'https://github.com/owner/repo' }, { online: false }), null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('github health separates issues/PRs and classifies protection', async () => {
+  const originalFetch = globalThis.fetch;
+  const response = (status, body, headers = {}) => ({ ok: status >= 200 && status < 300, status, headers: { get: (name) => headers[name.toLowerCase()] ?? null }, json: async () => body });
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/search/issues') && String(url).includes('is%3Aissue')) return response(200, { total_count: 3 });
+    if (String(url).includes('/search/issues') && String(url).includes('is%3Apr')) return response(200, { total_count: 1 });
+    if (String(url).endsWith('/releases/latest')) return response(200, { tag_name: 'v1.2.3', name: 'v1.2.3', published_at: '2026-01-01T00:00:00Z' });
+    if (String(url).includes('/protection')) return response(404, {});
+    if (String(url).includes('/repos/test-owner/health-repo')) return response(200, { open_issues_count: 4, stargazers_count: 1, archived: false, default_branch: 'main', permissions: {} });
+    return response(404, {});
+  };
+  try {
+    const result = await githubHealth({ remote: 'https://github.com/test-owner/health-repo', branch: 'main' }, { online: true });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.openIssues, 3);
+    assert.equal(result.openPRs, 1);
+    assert.equal(result.latestRelease, 'v1.2.3');
+    assert.equal(result.branchProtected, 'unprotected');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('github rate limit is not reported as unprotected', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 403, headers: { get: (name) => name.toLowerCase() === 'x-ratelimit-remaining' ? '0' : null }, json: async () => ({}) });
+  try {
+    const result = await githubHealth({ remote: 'https://github.com/rate-limit/audit', branch: 'main' }, { online: true });
+    assert.equal(result.status, 'rate_limited');
+    assert.equal(result.branchProtected, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
