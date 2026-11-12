@@ -234,7 +234,8 @@ async function main() {
     const p0After = await cdp.evaluate("document.querySelectorAll('section').length");
     check('P0 filter narrows cards', p0After <= p0Before, p0Before + ' -> ' + p0After);
     const buttons = await cdp.evaluate("Array.from(document.querySelectorAll('button')).map((b) => (b.textContent || '').trim()).join('|')");
-    check('export controls present', buttons.includes('Markdown') || buttons.includes('HTML') || buttons.includes('复制'), buttons.slice(0, 160));
+    check('export controls present', buttons.includes('Markdown') || buttons.includes('HTML') || buttons.includes('复制'), buttons.slice(0, 220));
+    check('handover and PDF controls present', buttons.includes('交接') || buttons.includes('Handover') || buttons.includes('PDF'), buttons.slice(0, 220));
     check('no uncaught exceptions', cdp.exceptions.length === 0, JSON.stringify(cdp.exceptions));
     const artifacts = path.join(SCRIPT_DIR, 'artifacts');
     await mkdir(artifacts, { recursive: true });
