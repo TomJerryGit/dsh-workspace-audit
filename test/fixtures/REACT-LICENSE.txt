@@ -1,0 +1,5 @@
+React and ReactDOM are bundled here for offline browser smoke tests.
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Licensed under the MIT License.
+https://github.com/facebook/react
