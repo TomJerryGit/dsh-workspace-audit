@@ -27,6 +27,18 @@ const ARTIFACT_NAMES = new Set(['node_modules', '.venv', 'venv', '__pycache__', 
 const GITHUB_CACHE = new Map();
 const GIT_CACHE = new Map();
 let authToken = null;
+let pluginVersionCache = null;
+
+async function pluginVersion() {
+  if (pluginVersionCache) return pluginVersionCache;
+  try {
+    const raw = JSON.parse(await fs.readFile(new URL('./package.json', import.meta.url), 'utf8'));
+    pluginVersionCache = typeof raw.version === 'string' ? raw.version : '0.0.0';
+  } catch (error) {
+    pluginVersionCache = '0.0.0';
+  }
+  return pluginVersionCache;
+}
 
 function resolveDshHome() {
   if (typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.trim().length > 0) return process.env.DSH_HOME.trim();
@@ -88,7 +100,7 @@ async function saveBaseline(baseline) {
 const KNOWN_RULES = new Set([
   'no-git', 'dirty', 'no-remote', 'readme', 'ci', 'self-hosted-pr', 'secrets', 'dangerous-exec',
   'artifacts', 'vulns', 'lockfile', 'unpinned', 'release-mismatch', 'archived', 'branch-protection',
-  'rate-limit', 'todo',
+  'rate-limit', 'github-search', 'todo',
 ]);
 
 async function readWorkspaceConfig(root) {
@@ -114,8 +126,7 @@ async function readWorkspaceConfig(root) {
   }
 }
 
-function applySuppressions(risks, config) {
-  const now = new Date();
+function applySuppressions(risks, config) {  const now = new Date();
   const ignored = [];
   const accepted = [];
   const active = [];
@@ -133,6 +144,34 @@ function applySuppressions(risks, config) {
     active.push(risk);
   }
   return { active, ignored, accepted };
+}
+
+const RULE_DIMENSION_ADJUSTMENTS = {
+  dirty: { security: 15 },
+  readme: { documentation: 35 },
+  ci: { development: 25, debugging: 20 },
+  'self-hosted-pr': { security: 40 },
+  secrets: { security: 20 },
+  'dangerous-exec': { security: 25 },
+  artifacts: { performance: 20 },
+  vulns: { security: 30 },
+  lockfile: { development: 20 },
+};
+
+function applyDimensionAdjustments(dimensions, suppressedRisks) {
+  const adjusted = { ...dimensions };
+  const adjustments = [];
+  for (const risk of suppressedRisks) {
+    const mapping = RULE_DIMENSION_ADJUSTMENTS[risk.id];
+    if (!mapping) continue;
+    for (const [dimension, points] of Object.entries(mapping)) {
+      if (adjusted[dimension] === undefined) continue;
+      const before = adjusted[dimension];
+      adjusted[dimension] = Math.min(100, before + points);
+      adjustments.push({ rule: risk.id, dimension, from: before, to: adjusted[dimension] });
+    }
+  }
+  return { dimensions: adjusted, adjustments };
 }
 
 async function saveSettings(settings) {
@@ -251,10 +290,12 @@ async function discoverWorkspaces(settings) {
 }
 
 async function gitInfo(root, options) {
-  const rootStat = await fs.stat(root).catch(() => null);
-  const rootMtime = rootStat ? rootStat.mtimeMs : 0;
-  const cached = GIT_CACHE.get(root);
-  if (cached && cached.rootMtime === rootMtime && Date.now() - cached.at < 60000 && !(options && options.noCache)) return cached.value;
+  const statOf = async (file) => (await fs.stat(file).catch(() => null))?.mtimeMs || 0;
+  const fingerprint = [
+    await statOf(root),
+    await statOf(path.join(root, '.git', 'HEAD')),
+    await statOf(path.join(root, '.git', 'index')),
+  ].join(':');
   const run = async (args) => {
     try {
       const result = await execFileAsync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-C', root, ...args], {
@@ -268,6 +309,19 @@ async function gitInfo(root, options) {
       return '';
     }
   };
+  const parseStatus = (status) => ({
+    dirty: status.length === 0 ? 0 : status.split(/\r?\n/).filter(Boolean).length,
+    untracked: status
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('?? '))
+      .map((line) => line.slice(3).trim().replace(/^"(.*)"$/, '$1'))
+      .filter(Boolean),
+  });
+  const cached = GIT_CACHE.get(root);
+  if (cached && cached.fingerprint === fingerprint && Date.now() - cached.at < 60000 && !(options && options.noCache)) {
+    const status = await run(['status', '--porcelain']);
+    return { ...cached.value, ...parseStatus(status) };
+  }
   const isRepo = (await run(['rev-parse', '--is-inside-work-tree'])) === 'true';
   if (!isRepo) return { isRepo: false, untracked: [] };
   const remote = await run(['remote', 'get-url', 'origin']);
@@ -276,22 +330,16 @@ async function gitInfo(root, options) {
   const last = await run(['log', '-1', '--format=%h|%ad|%s', '--date=short']);
   const tags = await run(['tag', '--sort=-v:refname']);
   const tracked = await run(['ls-files']);
-  const untracked = status
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('?? '))
-    .map((line) => line.slice(3).trim().replace(/^"(.*)"$/, '$1'))
-    .filter(Boolean);
   const value = {
     isRepo: true,
     remote,
     branch,
-    dirty: status.length === 0 ? 0 : status.split(/\r?\n/).filter(Boolean).length,
+    ...parseStatus(status),
     last,
     tags: tags.split(/\r?\n/).filter(Boolean).slice(0, 5),
     tracked: tracked.length === 0 ? [] : tracked.split(/\r?\n/),
-    untracked,
   };
-  GIT_CACHE.set(root, { at: Date.now(), value, rootMtime });
+  GIT_CACHE.set(root, { at: Date.now(), value, fingerprint });
   return value;
 }
 
@@ -316,61 +364,66 @@ async function dependencyHealth(root, options) {
     const text = await fs.readFile(path.join(root, requirementFile), 'utf8').catch(() => '');
     unpinned += (text.match(/^[A-Za-z0-9_.-]+\s*(>=|~=|>)/gm) || []).length;
   }
-  const vulnerabilities = { status: online ? 'skipped' : 'offline', total: 0, tool: '', ecosystem: '', reason: online ? '' : 'network checks disabled' };
-  if (!online) return { manifests, lockfiles, unpinned, vulnerabilities };
-  const audit = async (command, args, parse, tool, ecosystem) => {
+  const offlineVulnerabilities = { status: 'offline', total: 0, tool: '', ecosystem: '', reason: 'network checks disabled', checks: [] };
+  if (!online) return { manifests, lockfiles, unpinned, vulnerabilities: offlineVulnerabilities };
+  const checks = [];
+  const runAudit = async (command, args, parse, tool, ecosystem) => {
     if (!(await commandExists(command))) {
-      vulnerabilities.status = 'skipped';
-      vulnerabilities.reason = command + ' not installed';
+      checks.push({ status: 'skipped', total: 0, tool, ecosystem, reason: command + ' not installed' });
       return;
     }
     try {
       const result = await execFileAsync(command, args, { cwd: root, timeout: 30000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
-      vulnerabilities.status = 'checked';
-      vulnerabilities.total = parse(String(result.stdout || '')) || 0;
-      vulnerabilities.tool = tool;
-      vulnerabilities.ecosystem = ecosystem;
+      checks.push({ status: 'checked', total: parse(String(result.stdout || '')) || 0, tool, ecosystem, reason: '' });
     } catch (error) {
       try {
-        vulnerabilities.status = 'checked';
-        vulnerabilities.total = parse(String(error.stdout || '')) || 0;
-        vulnerabilities.tool = tool;
-        vulnerabilities.ecosystem = ecosystem;
+        checks.push({ status: 'checked', total: parse(String(error.stdout || '')) || 0, tool, ecosystem, reason: '' });
       } catch (inner) {
-        vulnerabilities.status = 'error';
-        vulnerabilities.tool = tool;
-        vulnerabilities.ecosystem = ecosystem;
-        vulnerabilities.reason = 'audit tool failed';
+        checks.push({ status: 'error', total: 0, tool, ecosystem, reason: 'audit tool failed' });
       }
     }
   };
   if (names.includes('package-lock.json')) {
-    await audit(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['audit', '--json', '--package-lock-only', '--omit=dev'], (text) => {
+    await runAudit(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['audit', '--json', '--package-lock-only', '--omit=dev'], (text) => {
       const parsed = JSON.parse(text);
       return Number(parsed.metadata && parsed.metadata.vulnerabilities && parsed.metadata.vulnerabilities.total) || 0;
     }, 'npm audit', 'npm');
-  } else if (names.includes('pnpm-lock.yaml')) {
-    await audit(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['audit', '--json'], (text) => {
+  }
+  if (names.includes('pnpm-lock.yaml')) {
+    await runAudit(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['audit', '--json'], (text) => {
       const parsed = JSON.parse(text);
       return Number(parsed.metadata && parsed.metadata.vulnerabilities && parsed.metadata.vulnerabilities.total) || Object.keys(parsed.advisories || {}).length;
     }, 'pnpm audit', 'pnpm');
-  } else if (names.includes('yarn.lock')) {
-    await audit(process.platform === 'win32' ? 'yarn.cmd' : 'yarn', ['audit', '--json'], (text) => text.split(/\r?\n/).filter((line) => line.includes('auditAdvisory')).length, 'yarn audit', 'yarn');
-  } else if (names.includes('Cargo.lock')) {
-    await audit('cargo', ['audit', '--json'], (text) => {
+  }
+  if (names.includes('yarn.lock')) {
+    await runAudit(process.platform === 'win32' ? 'yarn.cmd' : 'yarn', ['audit', '--json'], (text) => text.split(/\r?\n/).filter((line) => line.includes('auditAdvisory')).length, 'yarn audit', 'yarn');
+  }
+  if (names.includes('Cargo.lock')) {
+    await runAudit('cargo', ['audit', '--json'], (text) => {
       const parsed = JSON.parse(text);
       return Number(parsed.vulnerabilities && parsed.vulnerabilities.found) || (Array.isArray(parsed.vulnerabilities && parsed.vulnerabilities.list) ? parsed.vulnerabilities.list.length : 0);
     }, 'cargo audit', 'cargo');
-  } else if (names.includes('go.sum')) {
-    vulnerabilities.status = 'skipped';
-    vulnerabilities.ecosystem = 'go';
-    vulnerabilities.reason = 'govulncheck integration is not implemented yet';
-  } else if (requirementFile) {
-    await audit(process.platform === 'win32' ? 'pip-audit.exe' : 'pip-audit', ['-r', requirementFile, '--format', 'json'], (text) => {
+  }
+  if (names.includes('go.sum')) {
+    checks.push({ status: 'skipped', total: 0, tool: 'govulncheck', ecosystem: 'go', reason: 'govulncheck integration is not implemented yet' });
+  }
+  if (requirementFile) {
+    await runAudit(process.platform === 'win32' ? 'pip-audit.exe' : 'pip-audit', ['-r', requirementFile, '--format', 'json'], (text) => {
       const parsed = JSON.parse(text);
       return Array.isArray(parsed) ? parsed.reduce((sum, entry) => sum + (Array.isArray(entry.vulns) ? entry.vulns.length : 0), 0) : 0;
     }, 'pip-audit', 'python');
   }
+  const checked = checks.filter((check) => check.status === 'checked');
+  const errors = checks.filter((check) => check.status === 'error');
+  const skipped = checks.filter((check) => check.status === 'skipped');
+  const vulnerabilities = {
+    status: checked.length > 0 ? 'checked' : errors.length > 0 ? 'error' : skipped.length > 0 ? 'skipped' : 'skipped',
+    total: checked.reduce((sum, check) => sum + check.total, 0),
+    tool: checked.map((check) => check.tool).join(', '),
+    ecosystem: checked.map((check) => check.ecosystem).join(', '),
+    reason: checked.length > 0 ? '' : errors.length > 0 ? 'one or more audit tools failed' : skipped.map((check) => check.reason).filter(Boolean).join('; '),
+    checks,
+  };
   return { manifests, lockfiles, unpinned, vulnerabilities };
 }
 
@@ -428,7 +481,11 @@ async function githubHealth(git, options) {
       if (issueRes.ok) value.openIssues = Number((await issueRes.json()).total_count) || 0;
       if (prRes.ok) value.openPRs = Number((await prRes.json()).total_count) || 0;
       if (value.openIssues === undefined || value.openPRs === undefined) {
-        value.searchStatus = 'unavailable';
+        const issueState = classify(issueRes);
+        const prState = classify(prRes);
+        value.searchStatus = [issueState, prState].includes('rate_limited')
+          ? 'rate_limited'
+          : [issueState, prState].includes('error') ? 'error' : 'unavailable';
       }
     }
     if (value.status === 'ok') {
@@ -498,6 +555,41 @@ function isTextFile(name) {
   return /\.(py|js|mjs|cjs|ts|tsx|jsx|json|ya?ml|toml|md|txt|cfg|ini|sh|ps1|bat|cmd|go|rs|c|h|cpp|java|kt|rb|php|sql|css|html)$/i.test(name);
 }
 
+function isSecretFilename(file) {
+  const basename = path.basename(file).toLowerCase();
+  const sourceLike = /\.(py|js|mjs|cjs|ts|tsx|jsx|go|rs|c|h|cpp|java|kt|rb|php|sql)$/i.test(file);
+  if (sourceLike) return false;
+  return (
+    /(^|\/)\.env(\.|$)/i.test(file) ||
+    /\.(pem|key|p12|pfx|jks|keystore)$/i.test(file) ||
+    /(^|\/)(secrets?|credentials?)(\.(json|ya?ml|txt|ini|cfg)|$)/i.test(file) ||
+    basename === '.npmrc' || basename === '.pypirc'
+  );
+}
+
+async function scanSecretFilenames(root) {
+  const found = new Set();
+  const stack = [{ dir: root, depth: 0 }];
+  let entries = 0;
+  while (stack.length > 0 && entries < 6000 && found.size < 200) {
+    const current = stack.pop();
+    if (current.depth > 4) continue;
+    const items = await fs.readdir(current.dir, { withFileTypes: true }).catch(() => []);
+    for (const item of items) {
+      if (entries >= 6000 || found.size >= 200) break;
+      entries += 1;
+      const full = path.join(current.dir, item.name);
+      if (item.isDirectory()) {
+        if (SKIP_NAMES.has(item.name) || item.name === '.git' || item.name === '.hg' || item.name === '.svn') continue;
+        stack.push({ dir: full, depth: current.depth + 1 });
+      } else if (item.isFile() && isSecretFilename(item.name)) {
+        found.add(path.relative(root, full).replace(/\\/g, '/'));
+      }
+    }
+  }
+  return [...found];
+}
+
 function testFilePattern(name) {
   return /(^|\/)(tests?\/|test_[^/]+\.py$|[^/]+\.(test|spec)\.(js|ts|jsx|tsx|mjs)$|.*_test\.(go|rs|py)$)/i.test(name);
 }
@@ -514,11 +606,19 @@ async function projectProfile(root, entries) {
       if (scripts.start || scripts.dev || names.includes('Dockerfile')) return 'app';
       if (pkg.main || pkg.exports || pkg.bin) return 'library';
     } catch (error) {
-      // fall through to the generic app profile
+      // fall through
     }
   }
   if (names.includes('Cargo.toml') && names.includes('src')) return 'library';
-  if (names.includes('pyproject.toml')) return 'library';
+  if (names.includes('pyproject.toml')) {
+    const pyproject = await fs.readFile(path.join(root, 'pyproject.toml'), 'utf8').catch(() => '');
+    const readmeEntry = entries.find((entry) => /^readme/i.test(entry.name));
+    const readme = readmeEntry ? await fs.readFile(path.join(root, readmeEntry.name), 'utf8').catch(() => '') : '';
+    const appSignals = /\[project\.(gui-)?scripts\]|\[tool\.poetry\.scripts\]|console_scripts|gui_scripts|PyQt|PySide|QApplication|tkinter|electron/i.test(pyproject + '\n' + readme);
+    const appFiles = names.some((name) => /^(main|app|manage|gui)\.py$/i.test(name)) || names.some((name) => /^(app|ui|gui|desktop)$/i.test(name));
+    if (appSignals || appFiles) return 'app';
+    return 'library';
+  }
   if (requirementsLike(names)) return 'app';
   return 'app';
 }
@@ -617,16 +717,9 @@ async function scanWorkspace(workspace, options) {
       if (entry.isFile()) secretCandidates.add(entry.name);
     }
   }
+  for (const file of await scanSecretFilenames(root)) secretCandidates.add(file);
   for (const file of [...secretCandidates].slice(0, 3000)) {
-    const sourceLike = /\.(py|js|mjs|cjs|ts|tsx|jsx|go|rs|c|h|cpp|java|kt|rb|php|sql)$/i.test(file);
-    const basename = path.basename(file).toLowerCase();
-    const secretLike = !sourceLike && (
-      /(^|\/)\.env(\.|$)/i.test(file) ||
-      /\.(pem|key|p12|pfx|jks|keystore)$/i.test(file) ||
-      /(^|\/)(secrets?|credentials?)(\.(json|ya?ml|txt|ini|cfg)|$)/i.test(file) ||
-      basename === '.npmrc' || basename === '.pypirc'
-    );
-    if (secretLike) secretFiles.push(file);
+    if (isSecretFilename(file)) secretFiles.push(file);
   }
   for (const file of sourceFiles) {
     const full = path.join(root, file);
@@ -656,7 +749,7 @@ async function scanWorkspace(workspace, options) {
     documentation: (markers.readme ? 35 : 0) + (markers.docs ? 25 : 0) + (readmeText.length > 4000 ? 20 : readmeText.length > 1000 ? 10 : 0) + (markers.license ? 20 : 0),
     development: (markers.manifest ? 25 : 0) + (dependencies.lockfiles.length > 0 ? 20 : 0) + (markers.gitignore ? 20 : 0) + (markers.ci ? 25 : 0) + (markers.docker ? 10 : 0),
     debugging: Math.min(100, testFiles * 6 + (markers.tests ? 20 : 0) + (markers.ci ? 20 : 0)),
-    performance: Math.max(0, 100 - Math.min(80, Math.round(size.total / (1024 * 1024 * 50) * 10)) - (artifacts.length > 0 ? 20 : 0)),
+    performance: Math.max(0, 100 - Math.min(80, Math.round(size.total / (1024 * 1024 * 50) * 10)) - (artifacts.length > 0 ? 20 : 0) - Math.min(30, Math.round(artifacts.reduce((sum, item) => sum + item.bytes, 0) / (1024 * 1024 * 1024) * 5))),
     functionality: (markers.readme ? 30 : 0) + (tracked.length > 50 ? 35 : tracked.length > 10 ? 20 : 0) + (markers.tests ? 20 : 0) + (markers.ci ? 15 : 0),
     security: Math.max(0, 100 - (git.isRepo && git.dirty > 0 ? 15 : 0) - Math.min(40, dangerous * 5) - (workflows.some((wf) => wf.selfHosted && wf.pullRequest) ? 40 : 0) - (secretFiles.length > 0 ? 20 : 0) - (dependencies.vulnerabilities.total > 0 ? 30 : 0)),
     github: (git.isRepo ? 30 : 0) + (git.remote ? 30 : 0) + (git.dirty === 0 ? 20 : 0) + (git.tags && git.tags.length > 0 ? 20 : 0),
@@ -683,11 +776,13 @@ async function scanWorkspace(workspace, options) {
   if (github && github.archived === true) risks.push({ id: 'archived', severity: 'P2', text: 'GitHub 仓库已归档（archived）。', en: 'GitHub repository is archived.' });
   if (github && github.branchProtected === 'unprotected') risks.push({ id: 'branch-protection', severity: 'P2', text: 'GitHub 默认分支未检测到保护规则。', en: 'No branch protection detected on the default branch.' });
   if (github && github.status === 'rate_limited') risks.push({ id: 'rate-limit', severity: 'P2', text: 'GitHub API 触发限流，部分健康数据不可用。', en: 'GitHub API rate limit reached; some health data is unavailable.' });
+  if (github && github.searchStatus === 'rate_limited') risks.push({ id: 'github-search', severity: 'P2', text: 'GitHub Search API 限流，issue/PR 数量可能缺失。', en: 'GitHub Search API is rate-limited; issue/PR counts may be missing.' });
   if (todo > 20) risks.push({ id: 'todo', severity: 'P2', text: `源码中约 ${todo} 处 TODO/FIXME，建议建立清理计划。`, en: `About ${todo} TODO/FIXME markers; consider a cleanup plan.` });
   const config = workspaceConfig;
   const suppression = applySuppressions(risks, config);
   const activeRisks = suppression.active;
-  const scoring = scoreWorkspace(dimensions, projectType, activeRisks);
+  const adjusted = applyDimensionAdjustments(dimensions, [...suppression.ignored, ...suppression.accepted]);
+  const scoring = scoreWorkspace(adjusted.dimensions, projectType, activeRisks);
   const finalScore = scoring.score;
   return {
     path: root,
@@ -704,7 +799,8 @@ async function scanWorkspace(workspace, options) {
     todo,
     dangerous,
     secretFiles,
-    dimensions,
+    dimensions: adjusted.dimensions,
+    dimensionAdjustments: adjusted.adjustments,
     projectType,
     config,
     weights: scoring.weights,
@@ -748,6 +844,11 @@ function renderReport(workspaces, locale) {
       for (const deduction of workspace.deductions.slice(0, 5)) lines.push(`- ${deduction.dimension}: ${deduction.points} points${deduction.reason ? ' · ' + deduction.reason : ''}`);
       lines.push('');
     }
+    if (Array.isArray(workspace.dimensionAdjustments) && workspace.dimensionAdjustments.length > 0) {
+      lines.push(zh ? '### 维度调整' : '### Dimension adjustments', '');
+      for (const adjustment of workspace.dimensionAdjustments) lines.push(`- ${adjustment.rule}: ${adjustment.dimension} +${adjustment.to - adjustment.from}`);
+      lines.push('');
+    }
     lines.push(zh ? '### 维度' : '### Dimensions', '');
     for (const [key, value] of Object.entries(workspace.dimensions)) lines.push(`- ${zh ? key : (DIMENSION_EN[key] || key)}: ${value}/100`);
     if (Array.isArray(workspace.commands) && workspace.commands.length > 0) lines.push((zh ? '- 命令：' : '- Commands: ') + workspace.commands.map((command) => '`' + command + '`').join(' · '));
@@ -756,7 +857,7 @@ function renderReport(workspaces, locale) {
     if (workspace.dependencies && (workspace.dependencies.manifests.length > 0 || workspace.dependencies.lockfiles.length > 0)) {
       lines.push(`- ${zh ? '依赖' : 'Dependencies'}: manifests=${workspace.dependencies.manifests.join(',') || 'none'}; lockfiles=${workspace.dependencies.lockfiles.join(',') || 'none'}; vulnerabilities=${workspace.dependencies.vulnerabilities.total} (${workspace.dependencies.vulnerabilities.status})`);
     }
-    if (workspace.github) lines.push(`- GitHub: ${workspace.github.owner}/${workspace.github.repo}; release=${workspace.github.latestRelease || 'none'}; issues=${workspace.github.openIssues ?? '—'}; PRs=${workspace.github.openPRs ?? '—'}; branchProtected=${workspace.github.branchProtected ?? '—'}`);
+    if (workspace.github) lines.push(`- GitHub: ${workspace.github.owner}/${workspace.github.repo}; release=${workspace.github.latestRelease || 'none'}; issues=${workspace.github.openIssues ?? '—'}; PRs=${workspace.github.openPRs ?? '—'}; branchProtected=${workspace.github.branchProtected ?? '—'}; searchStatus=${workspace.github.searchStatus || 'ok'}`);
     lines.push('', zh ? '### 风险' : '### Risks', '');
     if (workspace.risks.length === 0) lines.push(zh ? '- 未发现阻塞风险。' : '- No blocking risks found.');
     for (const risk of workspace.risks || []) lines.push(`- **${risk.severity}** ${zh ? risk.text : (risk.en || risk.text)}`);
@@ -978,7 +1079,7 @@ function createHealthRoute() {
     try { historyEntries = (await loadHistory()).length; } catch (error) { historyEntries = 0; }
     try { baselineEntries = (await loadBaseline()).workspaces.length; } catch (error) { baselineEntries = 0; }
     sendJson(res, 200, {
-      version: '1.0.0',
+      version: await pluginVersion(),
       uptimeSec: Math.round(process.uptime()),
       memoryMB: { rss: Math.round(memory.rss / 1024 / 1024), heapUsed: Math.round(memory.heapUsed / 1024 / 1024) },
       jobs: { active: [...SCAN_JOBS.values()].filter((job) => job.state === 'running').length, total: SCAN_JOBS.size },
