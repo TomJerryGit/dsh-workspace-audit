@@ -34,6 +34,15 @@ window.__ModuleLoader__.load({
       todo: 'TODO',
       noRisk: '未发现阻塞风险',
       commands: '启动/测试入口见各项目 README 与报告。',
+      filterAll: '全部风险',
+      comparison: '项目对比',
+      trend: '趋势',
+      deps: '依赖',
+      vulns: '漏洞',
+      github: 'GitHub',
+      release: 'Release',
+      branch: '分支保护',
+      noLock: '无锁文件',
     };
     const en = {
       panel: 'Workspace Audit',
@@ -64,6 +73,15 @@ window.__ModuleLoader__.load({
       todo: 'TODO',
       noRisk: 'No blocking risks found',
       commands: 'See each project README and report for run/test commands.',
+      filterAll: 'All risks',
+      comparison: 'Workspace comparison',
+      trend: 'Trend',
+      deps: 'Deps',
+      vulns: 'Vulns',
+      github: 'GitHub',
+      release: 'Release',
+      branch: 'Branch protection',
+      noLock: 'No lockfile',
     };
     const page = { display: 'flex', flexDirection: 'column', gap: '14px', padding: '24px 32px', minHeight: '100%', overflow: 'auto', color: 'var(--dsw-alias-label-primary)' };
     const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '14px', padding: '14px', background: 'var(--dsw-alias-bg-layer-1)' };
@@ -82,6 +100,7 @@ window.__ModuleLoader__.load({
       const [scan, setScan] = React.useState(null);
       const [state, setState] = React.useState('loading');
       const [rootDraft, setRootDraft] = React.useState('');
+      const [riskFilter, setRiskFilter] = React.useState('all');
       const [copied, setCopied] = React.useState(false);
       const auth = () => token.length > 0 ? Promise.resolve(token) : fetch('/api/workspace-audit/auth').then((res) => res.json()).then((payload) => { setToken(payload.token); return payload.token; });
       const headers = (value) => ({ 'x-workspace-audit-token': value, accept: 'application/json' });
@@ -110,6 +129,7 @@ window.__ModuleLoader__.load({
       if (state === 'loading') return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('scanning')));
       if (state === 'failed' || scan === null) return h('div', { style: page }, h('h1', { style: { margin: 0, fontSize: '22px' } }, t('title')), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('failed')), h('button', { type: 'button', onClick: load }, t('scan')));
       const workspaces = Array.isArray(scan.workspaces) ? scan.workspaces : [];
+      const filteredWorkspaces = workspaces.filter((workspace) => riskFilter === 'all' || (workspace.risks || []).some((risk) => risk.severity === riskFilter));
       const avg = workspaces.length > 0 ? Math.round(workspaces.reduce((sum, workspace) => sum + workspace.score, 0) / workspaces.length) : 0;
       const p0 = workspaces.reduce((sum, workspace) => sum + workspace.risks.filter((risk) => risk.severity === 'P0').length, 0);
       return h('div', { style: page },
@@ -125,15 +145,31 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
           h('input', { value: rootDraft, placeholder: t('rootPlaceholder'), onChange: (event) => setRootDraft(event.target.value), style: { flex: '1 1 260px', padding: '6px 8px' } }),
           h('button', { type: 'button', onClick: addRoot, disabled: rootDraft.trim().length === 0 }, t('add')),
+          ['all', 'P0', 'P1', 'P2'].map((severity) => h('button', { key: severity, type: 'button', onClick: () => setRiskFilter(severity), style: { fontWeight: riskFilter === severity ? 700 : 400 } }, severity === 'all' ? t('filterAll') : severity)),
           h('button', { type: 'button', onClick: copy }, copied ? t('copied') : t('copy')),
           h('button', { type: 'button', onClick: download }, t('download')),
         ),
         workspaces.length === 0 ? h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('empty')) : null,
-        ...workspaces.map((workspace) => {
+        workspaces.length > 0 ? h('section', { style: card },
+          h('h2', { style: { margin: 0, fontSize: '16px' } }, t('comparison')),
+          h('div', { style: { overflowX: 'auto', marginTop: '8px' } },
+            h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '11px' } },
+              h('thead', null, h('tr', null, ['workspace', 'score', 'documentation', 'development', 'debugging', 'performance', 'functionality', 'security', 'github', 'trend'].map((key) => h('th', { key, style: { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid var(--dsw-alias-border-l1)' } }, key)))),
+              h('tbody', null, workspaces.map((workspace) => h('tr', { key: workspace.path },
+                h('td', { style: { padding: '4px 6px' } }, workspace.title),
+                h('td', { style: { padding: '4px 6px', fontWeight: 700, color: color(workspace.score) } }, workspace.score),
+                ...['documentation', 'development', 'debugging', 'performance', 'functionality', 'security', 'github'].map((key) => h('td', { key, style: { padding: '4px 6px' } }, workspace.dimensions[key])),
+                h('td', { key: 'trend', style: { padding: '4px 6px', color: workspace.trend && workspace.trend.delta > 0 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-secondary)' } }, workspace.trend && workspace.trend.delta !== null ? (workspace.trend.delta >= 0 ? '+' : '') + workspace.trend.delta : '—'),
+              ))),
+            ),
+          ),
+        ) : null,
+        filteredWorkspaces.map((workspace) => {
           const risks = workspace.risks || [];
           return h('section', { key: workspace.path, style: card },
             h('div', { style: { display: 'flex', gap: '10px', alignItems: 'baseline', flexWrap: 'wrap' } },
               h('h2', { style: { margin: 0, fontSize: '16px', flex: '1 1 auto' } }, workspace.title),
+              workspace.trend && workspace.trend.delta !== null ? h('span', { style: { fontSize: '12px', color: workspace.trend.delta >= 0 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)' } }, (workspace.trend.delta >= 0 ? '+' : '') + workspace.trend.delta) : null,
               h('strong', { style: { fontSize: '20px', color: color(workspace.score) } }, workspace.score + ' ' + grade(workspace.score)),
             ),
             h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', margin: '4px 0 8px' } }, t('path') + '：' + workspace.path),
@@ -142,6 +178,14 @@ window.__ModuleLoader__.load({
               h('span', null, t('size') + ': ' + money(workspace.size.bytes)),
               h('span', null, t('tests') + ': ' + workspace.testFiles),
               h('span', null, t('todo') + ': ' + workspace.todo),
+            ),
+            h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '4px' } },
+              workspace.dependencies && workspace.dependencies.manifests.length > 0
+                ? h('span', null, t('deps') + ': ' + (workspace.dependencies.lockfiles.length > 0 ? 'lock ✓' : t('noLock')) + ' · ' + t('vulns') + ' ' + workspace.dependencies.vulnerabilities.total + (workspace.dependencies.vulnerabilities.status === 'skipped' ? ' (skipped)' : ''))
+                : null,
+              workspace.github
+                ? h('span', null, t('github') + ': ' + workspace.github.owner + '/' + workspace.github.repo + ' · ' + t('release') + ' ' + (workspace.github.latestRelease || '—') + ' · ' + t('branch') + ' ' + String(workspace.github.branchProtected))
+                : null,
             ),
             h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '8px' } },
               Object.entries(workspace.dimensions || {}).map(([key, value]) => h('span', { key, style: { fontSize: '10px', padding: '1px 6px', borderRadius: '999px', background: 'var(--dsw-alias-bg-layer-2)' } }, key + ' ' + value)),
