@@ -32,6 +32,7 @@ test('scans a fixture workspace and identifies risks', async () => {
     assert.ok(result.workflows.some((workflow) => workflow.pullRequest && workflow.selfHosted));
     assert.ok(result.risks.some((risk) => risk.severity === 'P0'));
     assert.ok(result.todo >= 1);
+    assert.ok(Array.isArray(result.commands) && result.commands.includes('npm install'));
     assert.ok(result.score >= 0 && result.score <= 100);
     assert.equal(result.github, null);
   } finally {
