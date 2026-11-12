@@ -102,6 +102,45 @@ test('dependency health is offline by default', async () => {
   }
 });
 
+test('detects ignored and nested secret filenames', async () => {
+  const root = await fixtureCopy();
+  try {
+    await fs.appendFile(path.join(root, '.gitignore'), '\n.env.ignored\n');
+    await fs.mkdir(path.join(root, 'config'), { recursive: true });
+    await fs.writeFile(path.join(root, 'config', '.env.ignored'), 'DEMO=ignored\n');
+    const result = await scanWorkspace({ path: root, title: 'fixture' }, { noCache: true });
+    assert.ok(result.secretFiles.includes('config/.env.ignored'));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('detects pyproject desktop apps', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'workspace-audit-pyapp-'));
+  try {
+    await fs.writeFile(path.join(root, 'README.md'), '# Desktop App\n\nPyQt5 GUI application.\n');
+    await fs.writeFile(path.join(root, 'pyproject.toml'), '[project]\nname = "desktop-app"\nversion = "1.0.0"\n');
+    await fs.mkdir(path.join(root, 'app'));
+    await fs.writeFile(path.join(root, 'app', 'main.py'), 'print("app")\n');
+    const result = await scanWorkspace({ path: root, title: 'pyapp' }, { noCache: true });
+    assert.equal(result.projectType, 'app');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('git cache still refreshes dirty status', async () => {
+  const root = await fixtureCopy();
+  try {
+    const clean = await scanWorkspace({ path: root, title: 'fixture' }, { noCache: true });
+    await fs.appendFile(path.join(root, 'src', 'app.js'), '\n// changed without touching the repo root\n');
+    const dirty = await scanWorkspace({ path: root, title: 'fixture' });
+    assert.ok(dirty.git.dirty > clean.git.dirty);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('scans gracefully when Git is unavailable', async () => {
   const root = await fixtureCopy();
   const originalPath = process.env.PATH;
